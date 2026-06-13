@@ -1,0 +1,37 @@
+{
+  "name": "@vantus/apex-context-server",
+  "version": "1.0.0",
+  "description": "AST-aware code search, indexing, and context-retrieval MCP server for Turborepo monorepos",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "apex-context-server": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "opencode",
+    "scripts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "setup:opencode": "node scripts/setup-opencode.mjs",
+    "uninstall:opencode": "node scripts/uninstall-opencode.mjs",
+    "test": "node --test dist/**/*.test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "chokidar": "^4.0.3",
+    "fast-glob": "^3.3.0",
+    "ts-morph": "^25.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
