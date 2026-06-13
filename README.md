@@ -37,7 +37,9 @@ If raw shell search is truly necessary, prefix the command with `APEX_CONTEXT_AL
 Apex builds a durable workspace memory file under `~/.config/opencode/apex-context-index/`. The memory contains:
 
 - file paths, basenames, languages, sizes, imports, and importers
-- exported symbols with file, line, column, and declaration kind
+- exported symbols and top-level local declarations with file, line, column, and declaration kind
+- static imports, re-exports, dynamic imports, and CommonJS `require` edges
+- relative imports, workspace package imports, and common `tsconfig`/Next.js app aliases such as `@/*`
 - per-file size, mtime, and SHA-256 content fingerprints
 - Next.js route, layout, page, loading, error, and route-handler files
 - searchable source lines
@@ -58,14 +60,14 @@ Secret-like values are redacted before source lines are written to memory. `.env
 - `get_workspace_memory`: returns the persistent memory map summary and cache location.
 - `refresh_workspace_memory`: force-rebuilds and persists the workspace memory.
 - `watch_workspace_memory`: starts or reports the live watcher.
-- `refresh_changed_files`: refreshes memory after changed/deleted files are detected.
+- `refresh_changed_files`: refreshes memory after changed/deleted/added files are detected.
 - `get_index_diagnostics`: reports skipped files, parse failures, redactions, alias misses, and watcher status.
 - `locate_code`: instantly locates likely files, symbols, routes, imports, and source lines from memory.
 - `read_context_bundle`: returns edit-ready context for a file, symbol, route, or query.
 - `get_workspace_topology`: scans `apps/*` and `packages/*` package manifests and returns a workspace dependency graph.
 - `index_workspace`: loads or builds the persistent AST-backed workspace memory.
 - `search_code`: searches memory-indexed source lines with plain text or regular expressions.
-- `find_symbol`: finds exported symbols discovered by the indexer.
+- `find_symbol`: finds exported and top-level local symbols discovered by the indexer.
 - `read_component_context`: returns an exported symbol and the local or imported type definitions it depends on.
 
 ## Manual Start

@@ -3,24 +3,27 @@ import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import fg from "fast-glob";
-import { Node, Project, SourceFile } from "ts-morph";
+import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
-const INDEX_SCHEMA_VERSION = 4;
+const INDEX_SCHEMA_VERSION = 5;
 const MAX_RESULTS = 200;
 
+const CODE_EXTENSIONS =
+  "ts,tsx,mts,cts,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro";
+
 const DEFAULT_PATTERNS = [
-  "apps/**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "packages/**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "services/**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "libs/**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "tools/**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "workers/**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "supabase/**/*.{sql,ts,tsx,js,json,md,yaml,yml}",
+  `apps/**/*.{${CODE_EXTENSIONS}}`,
+  `packages/**/*.{${CODE_EXTENSIONS}}`,
+  `services/**/*.{${CODE_EXTENSIONS}}`,
+  `libs/**/*.{${CODE_EXTENSIONS}}`,
+  `tools/**/*.{${CODE_EXTENSIONS}}`,
+  `workers/**/*.{${CODE_EXTENSIONS}}`,
+  "supabase/**/*.{sql,ts,tsx,mts,cts,js,json,md,yaml,yml}",
   "prisma/**/*.{prisma,sql,ts,js,json,md}",
   ".github/workflows/*.{yaml,yml}",
-  "src/**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,mdx,css,scss,prisma,sql,graphql,gql,yaml,yml,toml,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "*.{js,cjs,mjs,ts,tsx,json,md,mdx,yaml,yml,toml,prisma,sql,graphql,gql,sh,bash,py,go,rs,php,vue,svelte,astro}",
-  "*.config.{js,cjs,mjs,ts}",
+  `src/**/*.{${CODE_EXTENSIONS}}`,
+  `*.{${CODE_EXTENSIONS}}`,
+  "*.config.{js,cjs,mjs,ts,mts,cts}",
   "Dockerfile",
   "docker-compose.{yaml,yml}",
   ".env.example",
@@ -30,6 +33,7 @@ const DEFAULT_PATTERNS = [
   "nx.json",
   "rush.json",
   "lerna.json",
+  "pnpm-workspace.yaml",
 ];
 
 const IGNORE_PATTERNS = [
@@ -58,6 +62,8 @@ const IGNORE_PATTERNS = [
 const INDEXABLE_SOURCE_EXTENSIONS = new Set([
   ".ts",
   ".tsx",
+  ".mts",
+  ".cts",
   ".js",
   ".jsx",
   ".mjs",
@@ -67,6 +73,8 @@ const INDEXABLE_SOURCE_EXTENSIONS = new Set([
 const SEARCHABLE_EXTENSIONS = new Set([
   ".ts",
   ".tsx",
+  ".mts",
+  ".cts",
   ".js",
   ".jsx",
   ".mjs",
@@ -99,6 +107,7 @@ const SOURCE_EXTENSIONS = [
   ".tsx",
   ".mts",
   ".cts",
+  ".d.ts",
   ".js",
   ".jsx",
   ".mjs",
@@ -216,6 +225,7 @@ export interface IndexedSymbol {
   fileId: number;
   line: number;
   column: number;
+  isExported?: boolean;
 }
 
 export interface IndexedLine {
@@ -303,6 +313,13 @@ export interface WorkspaceMemorySnapshot {
   }>;
 }
 
+interface TsConfigAlias {
+  configDir: string;
+  baseUrl: string;
+  key: string;
+  targets: string[];
+}
+
 export async function buildWorkspaceIndex(
   options: BuildIndexOptions = {},
 ): Promise<WorkspaceIndex> {
@@ -332,6 +349,7 @@ export async function buildWorkspaceIndex(
     onlyFiles: true,
     unique: true,
   });
+  const aliases = await readTsConfigAliases(root, files);
 
   const project = new Project({
     skipAddingFilesFromTsConfig: true,
@@ -368,7 +386,7 @@ export async function buildWorkspaceIndex(
       const relativePath = toRelativePath(root, absolutePath);
       const fileId = indexedFiles.length;
       const fileSymbols = sourceFile
-        ? extractExportedSymbols(sourceFile, root, fileId, symbols.length)
+        ? extractCodeSymbols(sourceFile, root, fileId, symbols.length)
         : [];
       const imports = sourceFile ? extractImports(sourceFile) : [];
 
@@ -409,11 +427,10 @@ export async function buildWorkspaceIndex(
         path: absolutePath,
         reason: err instanceof Error ? err.message : String(err),
       });
-      continue;
     }
   }
 
-  attachResolvedImportGraph(indexedFiles, diagnostics);
+  attachResolvedImportGraph(indexedFiles, aliases, diagnostics);
   diagnostics.lastRefreshDurationMs = Date.now() - startedAt;
 
   const index: WorkspaceIndex = {
@@ -452,11 +469,14 @@ export async function refreshChangedFiles(
 ): Promise<WorkspaceIndex> {
   const root = resolveRoot(options.root);
   const existing = await readPersistedIndexUnchecked(root, getIndexPath(root));
-  const changedFiles = existing ? await diffWorkspaceFiles(existing) : null;
+  const diff = existing ? await diffWorkspaceFiles(existing) : null;
   const index = await buildWorkspaceIndex({ ...options, root, force: true });
-  index.changedFiles = changedFiles?.changedFiles ?? [];
-  index.deletedFiles = changedFiles?.deletedFiles ?? [];
-  index.diagnostics.lastRefreshKind = changedFiles ? "incremental" : "full";
+  index.changedFiles = uniqueStrings([
+    ...(diff?.changedFiles ?? []),
+    ...(diff?.addedFiles ?? []),
+  ]);
+  index.deletedFiles = diff?.deletedFiles ?? [];
+  index.diagnostics.lastRefreshKind = diff ? "incremental" : "full";
   await writePersistedIndex(index);
   return index;
 }
@@ -719,7 +739,7 @@ export function createWorkspaceMemorySnapshot(
 
 export function formatIndexSummary(index: WorkspaceIndex): string {
   return [
-    `Workspace Memory - ${index.fileCount} file(s), ${index.symbolCount} exported symbol(s), ${index.lineCount} searchable line(s)`,
+    `Workspace Memory - ${index.fileCount} file(s), ${index.symbolCount} symbol(s), ${index.lineCount} searchable line(s)`,
     `Tokens: ${index.tokenCount}`,
     `Root: ${index.root}`,
     `Index: ${index.indexPath}`,
@@ -754,9 +774,7 @@ export function formatMemorySummary(index: WorkspaceIndex): string {
     "Likely Entry Files",
     "------------------",
     snapshot.entryFiles.length
-      ? snapshot.entryFiles
-          .map((file) => `- ${file.path} (${file.reason})`)
-          .join("\n")
+      ? snapshot.entryFiles.map((file) => `- ${file.path} (${file.reason})`).join("\n")
       : "(none)",
   ];
 
@@ -764,57 +782,171 @@ export function formatMemorySummary(index: WorkspaceIndex): string {
 }
 
 function extractImports(sourceFile: SourceFile): string[] {
-  return sourceFile
-    .getImportDeclarations()
-    .map((decl) => decl.getModuleSpecifierValue())
-    .sort();
+  const imports = new Set<string>();
+
+  for (const decl of sourceFile.getImportDeclarations()) {
+    imports.add(decl.getModuleSpecifierValue());
+  }
+
+  for (const decl of sourceFile.getExportDeclarations()) {
+    const specifier = decl.getModuleSpecifierValue();
+    if (specifier) {
+      imports.add(specifier);
+    }
+  }
+
+  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const expression = call.getExpression().getText();
+    const firstArg = call.getArguments()[0];
+    const literal = getStringLiteralValue(firstArg);
+    if (!literal) {
+      continue;
+    }
+
+    if (expression === "require" || expression === "import") {
+      imports.add(literal);
+    }
+  }
+
+  return [...imports].sort();
 }
 
-function extractExportedSymbols(
+function getStringLiteralValue(node: Node | undefined): string | null {
+  if (!node) {
+    return null;
+  }
+  if (Node.isStringLiteral(node) || Node.isNoSubstitutionTemplateLiteral(node)) {
+    return node.getLiteralText();
+  }
+  return null;
+}
+
+function extractCodeSymbols(
   sourceFile: SourceFile,
   root: string,
   fileId: number,
   firstSymbolId: number,
 ): IndexedSymbol[] {
-  const symbols: IndexedSymbol[] = [];
   const relativeFile = toRelativePath(root, sourceFile.getFilePath());
+  const exportedByStart = new Map<number, string[]>();
 
   for (const [exportName, declarations] of sourceFile.getExportedDeclarations()) {
     for (const declaration of declarations) {
-      const position = sourceFile.getLineAndColumnAtPos(declaration.getStart());
-      symbols.push({
-        id: firstSymbolId + symbols.length,
-        name: getDisplayName(exportName, declaration),
-        exportName,
-        kind: declaration.getKindName(),
-        file: relativeFile,
-        fileId,
-        line: position.line,
-        column: position.column,
-      });
+      const textNode = expandDeclarationTextNode(declaration);
+      const names = exportedByStart.get(textNode.getStart()) ?? [];
+      names.push(exportName);
+      exportedByStart.set(textNode.getStart(), names);
     }
+  }
+
+  const symbols: IndexedSymbol[] = [];
+  const seen = new Set<string>();
+
+  for (const declaration of sourceFile.getDescendants()) {
+    if (!isSupportedSymbolDeclaration(declaration)) {
+      continue;
+    }
+
+    const textNode = expandDeclarationTextNode(declaration);
+    if (!isTopLevelDeclaration(textNode) && !exportedByStart.has(textNode.getStart())) {
+      continue;
+    }
+
+    const name = getDeclarationName(declaration);
+    if (!name) {
+      continue;
+    }
+
+    const exportNames = exportedByStart.get(textNode.getStart()) ?? [];
+    const position = sourceFile.getLineAndColumnAtPos(declaration.getStart());
+    const key = `${relativeFile}:${textNode.getStart()}:${name}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+
+    symbols.push({
+      id: firstSymbolId + symbols.length,
+      name,
+      exportName: exportNames[0] ?? name,
+      kind: declaration.getKindName(),
+      file: relativeFile,
+      fileId,
+      line: position.line,
+      column: position.column,
+      isExported: exportNames.length > 0,
+    });
+  }
+
+  for (const [start, exportNames] of exportedByStart) {
+    if (symbols.some((symbol) => symbol.isExported && exportNames.includes(symbol.exportName))) {
+      continue;
+    }
+    const declaration = sourceFile
+      .getDescendants()
+      .find((candidate) => expandDeclarationTextNode(candidate).getStart() === start);
+    if (!declaration) {
+      continue;
+    }
+    const position = sourceFile.getLineAndColumnAtPos(declaration.getStart());
+    const exportName = exportNames[0] ?? "default";
+    symbols.push({
+      id: firstSymbolId + symbols.length,
+      name: getDeclarationName(declaration) ?? exportName,
+      exportName,
+      kind: declaration.getKindName(),
+      file: relativeFile,
+      fileId,
+      line: position.line,
+      column: position.column,
+      isExported: true,
+    });
   }
 
   return symbols;
 }
 
-function getDisplayName(exportName: string, declaration: Node): string {
-  if (exportName !== "default") {
-    return exportName;
-  }
+function isSupportedSymbolDeclaration(node: Node): boolean {
+  return (
+    Node.isInterfaceDeclaration(node) ||
+    Node.isTypeAliasDeclaration(node) ||
+    Node.isFunctionDeclaration(node) ||
+    Node.isClassDeclaration(node) ||
+    Node.isVariableDeclaration(node) ||
+    Node.isEnumDeclaration(node)
+  );
+}
 
+function getDeclarationName(node: Node): string | undefined {
   if (
-    Node.isClassDeclaration(declaration) ||
-    Node.isFunctionDeclaration(declaration) ||
-    Node.isInterfaceDeclaration(declaration) ||
-    Node.isTypeAliasDeclaration(declaration) ||
-    Node.isEnumDeclaration(declaration) ||
-    Node.isVariableDeclaration(declaration)
+    Node.isInterfaceDeclaration(node) ||
+    Node.isTypeAliasDeclaration(node) ||
+    Node.isFunctionDeclaration(node) ||
+    Node.isClassDeclaration(node) ||
+    Node.isVariableDeclaration(node) ||
+    Node.isEnumDeclaration(node)
   ) {
-    return declaration.getName() || "default";
+    return node.getName();
   }
+  return undefined;
+}
 
-  return "default";
+function expandDeclarationTextNode(node: Node): Node {
+  if (Node.isVariableDeclaration(node)) {
+    return node.getFirstAncestorByKind(SyntaxKind.VariableStatement) ?? node;
+  }
+  return node;
+}
+
+function isTopLevelDeclaration(node: Node): boolean {
+  const parent = node.getParent();
+  if (Node.isSourceFile(parent)) {
+    return true;
+  }
+  if (Node.isVariableStatement(node) && Node.isSourceFile(parent)) {
+    return true;
+  }
+  return false;
 }
 
 function addContentLines(
@@ -890,17 +1022,19 @@ function addSymbolTokens(
 
 function attachResolvedImportGraph(
   files: IndexedFile[],
+  aliases: TsConfigAlias[],
   diagnostics: IndexDiagnostics,
 ): void {
   const fileByPath = new Map(files.map((file) => [file.path, file]));
 
   for (const file of files) {
-    file.resolvedImports = file.imports
-      .map((specifier) =>
-        resolveImportToIndexedPath(file.path, specifier, fileByPath, diagnostics),
-      )
-      .filter((resolved): resolved is string => Boolean(resolved))
-      .sort();
+    file.resolvedImports = uniqueStrings(
+      file.imports
+        .map((specifier) =>
+          resolveImportToIndexedPath(file.path, specifier, fileByPath, aliases, diagnostics),
+        )
+        .filter((resolved): resolved is string => Boolean(resolved)),
+    );
 
     for (const importedPath of file.resolvedImports) {
       const imported = fileByPath.get(importedPath);
@@ -919,9 +1053,10 @@ function resolveImportToIndexedPath(
   fromPath: string,
   specifier: string,
   fileByPath: Map<string, IndexedFile>,
+  aliases: TsConfigAlias[],
   diagnostics: IndexDiagnostics,
 ): string | null {
-  const candidates = getImportCandidates(fromPath, specifier, fileByPath);
+  const candidates = getImportCandidates(fromPath, specifier, fileByPath, aliases);
 
   for (const candidate of candidates) {
     if (fileByPath.has(candidate)) {
@@ -943,13 +1078,21 @@ function getImportCandidates(
   fromPath: string,
   specifier: string,
   fileByPath: Map<string, IndexedFile>,
+  aliases: TsConfigAlias[],
 ): string[] {
   const candidates: string[] = [];
 
   if (specifier.startsWith(".")) {
-    const basePath = normalizePath(path.join(path.dirname(fromPath), specifier));
-    candidates.push(...expandImportBase(basePath));
-  } else if (specifier.startsWith("@/") || specifier.startsWith("~/")) {
+    candidates.push(...expandImportBase(normalizePath(path.join(path.dirname(fromPath), specifier))));
+    return uniqueStrings(candidates);
+  }
+
+  candidates.push(...getAliasCandidates(fromPath, specifier, aliases, fileByPath));
+
+  if (specifier.startsWith("@/") || specifier.startsWith("~/")) {
+    for (const srcRoot of getNearestSourceRoots(fromPath, fileByPath)) {
+      candidates.push(...expandImportBase(normalizePath(path.join(srcRoot, specifier.slice(2)))));
+    }
     candidates.push(...expandImportBase(normalizePath(path.join("src", specifier.slice(2)))));
   } else {
     const workspaceMatch = findWorkspacePackageImport(specifier, fileByPath);
@@ -958,7 +1101,7 @@ function getImportCandidates(
     }
   }
 
-  return candidates;
+  return uniqueStrings(candidates);
 }
 
 function expandImportBase(basePath: string): string[] {
@@ -966,6 +1109,25 @@ function expandImportBase(basePath: string): string[] {
     ...SOURCE_EXTENSIONS.map((ext) => `${basePath}${ext}`),
     ...SOURCE_EXTENSIONS.map((ext) => normalizePath(path.join(basePath, `index${ext}`))),
   ];
+}
+
+function getNearestSourceRoots(
+  fromPath: string,
+  fileByPath: Map<string, IndexedFile>,
+): string[] {
+  const roots = new Set<string>();
+  const parts = fromPath.split("/");
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    const candidate = parts.slice(0, i).join("/");
+    if (!candidate) {
+      continue;
+    }
+    const srcRoot = normalizePath(path.join(candidate, "src"));
+    if ([...fileByPath.keys()].some((filePath) => filePath.startsWith(`${srcRoot}/`))) {
+      roots.add(srcRoot);
+    }
+  }
+  return [...roots];
 }
 
 function findWorkspacePackageImport(
@@ -979,14 +1141,21 @@ function findWorkspacePackageImport(
   for (const packageFile of packageJsonFiles) {
     const packageRoot = path.dirname(packageFile.path);
     const packageName = packageFile.packageName;
-    if (packageName && (specifier === packageName || specifier.startsWith(`${packageName}/`))) {
-      const remainder = specifier === packageName ? "src/index" : specifier.slice(packageName.length + 1);
-      for (const candidate of expandImportBase(normalizePath(path.join(packageRoot, remainder)))) {
-        if (fileByPath.has(candidate)) {
-          return candidate;
-        }
-      }
-      for (const candidate of expandImportBase(normalizePath(path.join(packageRoot, "src", remainder)))) {
+    if (!packageName || (specifier !== packageName && !specifier.startsWith(`${packageName}/`))) {
+      continue;
+    }
+
+    const remainder = specifier === packageName ? "src/index" : specifier.slice(packageName.length + 1);
+    const bases = [
+      normalizePath(path.join(packageRoot, remainder)),
+      normalizePath(path.join(packageRoot, "src", remainder)),
+    ];
+    if (specifier === packageName) {
+      bases.push(normalizePath(path.join(packageRoot, "index")));
+    }
+
+    for (const base of bases) {
+      for (const candidate of expandImportBase(base)) {
         if (fileByPath.has(candidate)) {
           return candidate;
         }
@@ -995,6 +1164,95 @@ function findWorkspacePackageImport(
   }
 
   return null;
+}
+
+async function readTsConfigAliases(root: string, files: string[]): Promise<TsConfigAlias[]> {
+  const aliases: TsConfigAlias[] = [];
+
+  for (const absolutePath of files) {
+    const basename = path.basename(absolutePath);
+    if (!/^tsconfig.*\.json$/.test(basename)) {
+      continue;
+    }
+
+    try {
+      const config = JSON.parse(await readFile(absolutePath, "utf8")) as {
+        compilerOptions?: {
+          baseUrl?: unknown;
+          paths?: unknown;
+        };
+      };
+      const compilerOptions = config.compilerOptions;
+      if (!compilerOptions || typeof compilerOptions.paths !== "object" || !compilerOptions.paths) {
+        continue;
+      }
+
+      const configDir = toRelativePath(root, path.dirname(absolutePath));
+      const baseUrl =
+        typeof compilerOptions.baseUrl === "string"
+          ? normalizePath(path.join(configDir, compilerOptions.baseUrl))
+          : configDir;
+
+      for (const [key, value] of Object.entries(compilerOptions.paths)) {
+        if (!Array.isArray(value)) {
+          continue;
+        }
+        const targets = value.filter((target): target is string => typeof target === "string");
+        if (targets.length) {
+          aliases.push({ configDir, baseUrl, key, targets });
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return aliases;
+}
+
+function getAliasCandidates(
+  fromPath: string,
+  specifier: string,
+  aliases: TsConfigAlias[],
+  fileByPath: Map<string, IndexedFile>,
+): string[] {
+  const candidates: string[] = [];
+  const relevant = aliases
+    .filter(
+      (alias) =>
+        alias.configDir === "" ||
+        fromPath === alias.configDir ||
+        fromPath.startsWith(`${alias.configDir}/`),
+    )
+    .sort((a, b) => b.configDir.length - a.configDir.length);
+
+  for (const alias of relevant) {
+    const wildcard = matchTsPathAlias(alias.key, specifier);
+    if (wildcard === null) {
+      continue;
+    }
+
+    for (const target of alias.targets) {
+      const replaced = target.includes("*") ? target.replace("*", wildcard) : target;
+      const base = normalizePath(path.join(alias.baseUrl, replaced));
+      candidates.push(...expandImportBase(base));
+    }
+  }
+
+  return candidates.filter((candidate) => fileByPath.has(candidate));
+}
+
+function matchTsPathAlias(pattern: string, specifier: string): string | null {
+  if (!pattern.includes("*")) {
+    return pattern === specifier ? "" : null;
+  }
+
+  const [prefix, suffix = ""] = pattern.split("*", 2);
+  if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) {
+    return null;
+  }
+
+  return specifier.slice(prefix.length, specifier.length - suffix.length);
 }
 
 function getCandidateLineIds(index: WorkspaceIndex, query: string): number[] {
@@ -1057,7 +1315,7 @@ function addSymbolLocations(
       line: symbol.line,
       column: symbol.column,
       name: symbol.name,
-      reason: `exported ${symbol.kind} ${symbol.exportName}`,
+      reason: `${symbol.isExported ? "exported" : "local"} ${symbol.kind} ${symbol.exportName}`,
     });
   }
 }
@@ -1109,7 +1367,7 @@ function addFileLocations(
       reason: file.routeKind
         ? `Next.js ${file.routeKind} file`
         : `${file.language} file path match`,
-      preview: `${file.symbols.length} exported symbol(s), ${file.importedBy.length} importer(s)`,
+      preview: `${file.symbols.length} symbol(s), ${file.importedBy.length} importer(s)`,
     });
   }
 }
@@ -1134,7 +1392,7 @@ function addImportLocations(
       continue;
     }
 
-    const importsText = file.imports.join(" ");
+    const importsText = [...file.imports, ...file.resolvedImports].join(" ");
     const score = scoreTokenCoverage(query, importsText) + 25;
     if (score <= 25) {
       continue;
@@ -1145,9 +1403,11 @@ function addImportLocations(
       score,
       file: file.path,
       reason: "import specifier match",
-      preview: file.imports.filter((specifier) =>
-        tokenizeForIndex(specifier).some((token) => tokens.includes(token)),
-      ).join(", "),
+      preview: file.imports
+        .filter((specifier) =>
+          tokenizeForIndex(specifier).some((token) => tokens.includes(token)),
+        )
+        .join(", "),
     });
   }
 }
@@ -1236,6 +1496,9 @@ function rankSymbol(query: string, symbol: IndexedSymbol): number {
     score += 50;
   }
 
+  if (symbol.isExported) {
+    score += 6;
+  }
   if (symbol.kind.includes("Function") || symbol.kind.includes("Class")) {
     score += 8;
   }
@@ -1480,24 +1743,26 @@ async function isWorkspaceMemoryMarkedStale(root: string): Promise<boolean> {
 
 async function clearWorkspaceMemoryStale(root: string): Promise<void> {
   const statePath = path.join(getOpenCodeConfigDir(), "apex-context-usage.json");
+  let state: ApexUsageState = {};
   try {
-    const state = JSON.parse(await readFile(statePath, "utf8")) as ApexUsageState;
-    state.workspaces ??= {};
-    const rootHash = hashRoot(root);
-    state.workspaces[rootHash] ??= { root };
-    state.workspaces[rootHash].root = root;
-    state.workspaces[rootHash].memoryStale = false;
-    state.workspaces[rootHash].changedFiles = [];
-    state.workspaces[rootHash].deletedFiles = [];
-    state.workspaces[rootHash].memoryRefreshedAt = new Date().toISOString();
-    state.memoryStale = Object.values(state.workspaces).some(
-      (workspace) => workspace.memoryStale === true,
-    );
-    await mkdir(path.dirname(statePath), { recursive: true });
-    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    state = JSON.parse(await readFile(statePath, "utf8")) as ApexUsageState;
   } catch {
-    return;
+    state = {};
   }
+
+  state.workspaces ??= {};
+  const rootHash = hashRoot(root);
+  state.workspaces[rootHash] ??= { root };
+  state.workspaces[rootHash].root = root;
+  state.workspaces[rootHash].memoryStale = false;
+  state.workspaces[rootHash].changedFiles = [];
+  state.workspaces[rootHash].deletedFiles = [];
+  state.workspaces[rootHash].memoryRefreshedAt = new Date().toISOString();
+  state.memoryStale = Object.values(state.workspaces).some(
+    (workspace) => workspace.memoryStale === true,
+  );
+  await mkdir(path.dirname(statePath), { recursive: true });
+  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
 async function markWorkspaceMemoryStale(
@@ -1681,6 +1946,8 @@ function entryReason(file: IndexedFile): string {
 function languageForExtension(ext: string): string {
   switch (ext) {
     case ".ts":
+    case ".mts":
+    case ".cts":
       return "typescript";
     case ".tsx":
       return "typescript-react";
