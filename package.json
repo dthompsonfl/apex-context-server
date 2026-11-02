@@ -19,7 +19,7 @@
     "start": "node dist/index.js",
     "setup:opencode": "node scripts/setup-opencode.mjs",
     "uninstall:opencode": "node scripts/uninstall-opencode.mjs",
-    "test": "node --test dist/**/*.test.js"
+    "test": "node --test dist/*.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
