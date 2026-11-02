@@ -2,7 +2,7 @@
 
 Apex Context Server is a local Model Context Protocol (MCP) server for OpenCode. It gives coding agents AST-aware tools for searching, indexing, mapping, and reading code in large Next.js and Turborepo workspaces.
 
-**Verification:** [Build, typecheck, fixture tests, and dependency audit passed in GitHub Actions](https://github.com/dthompsonfl/apex-context-server/actions/runs/41545493391) on Node.js 20 and 22 (November 2, 2026). The repository does not yet contain a checked-in `package-lock.json`; installations are not fully locked or independently benchmarked.
+**Verification:** [Build, typecheck, fixture tests, and dependency audit passed in GitHub Actions](https://github.com/dthompsonfl/apex-context-server/actions/runs/41545493391) on Node.js 20 and 22 (November 2, 2026). The repository includes a committed `package-lock.json`; its CI now uses `npm ci`. Integration performance and productivity gains are not independently benchmarked.
 
 To validate the source locally, run `npm install`, `npm run typecheck`, `npm run build`, then `npm test`. The `setup:opencode` script edits user-level OpenCode settings; run it only after reviewing the effect.
 
