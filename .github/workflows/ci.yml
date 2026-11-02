@@ -21,10 +21,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      # No package-lock.json is committed yet. This is a verification gate,
-      # not a claim of reproducible installs. Lockfile follow-up is required.
+      # Use the checked-in lockfile and prevent package install hooks.
       - name: Install dependencies
-        run: npm install --ignore-scripts --no-fund
+        run: npm ci --ignore-scripts --no-fund
       - name: Typecheck
         run: npm run typecheck
       - name: Build
@@ -39,14 +38,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Resolve dependencies
-        run: npm install --package-lock-only --ignore-scripts --no-fund
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund
       - name: Audit installed dependency graph
         run: npm audit --audit-level=high
-      - name: Retain generated lockfile for reconciliation
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: apex-generated-package-lock
-          path: package-lock.json
-          if-no-files-found: error
