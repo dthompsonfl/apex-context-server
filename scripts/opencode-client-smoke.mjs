@@ -75,6 +75,9 @@ try {
   }
   config.model = "fixture/fixture";
   await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
+  // Force the same isolated project config file into both OpenCode client loaders.
+  // Project discovery differs across V1 and V2, especially outside a Git checkout.
+  env.OPENCODE_CONFIG = configPath;
   const listed = await run(cli, ["mcp", "list"], env, 120000);
   const text = listed.stdout + "\n" + listed.stderr;
   assert.match(text, /apex-context/i, "OpenCode must discover Apex in the client config");
