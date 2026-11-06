@@ -34,6 +34,9 @@ async function run(command, args, env, timeout = 90000) {
 }
 try {
   await cp(path.join(repo, "examples/demo-workspace"), project, { recursive: true });
+  // OpenCode V2's service worktree discovery requires a Git project; absence
+  // can report "No MCP servers configured" even with a valid project config.
+  await exec("git", ["init", "-q"], { cwd: project, timeout: 10000 });
   await mkdir(home);
   await mkdir(global);
   const env = {
@@ -78,10 +81,15 @@ try {
   // Force the same isolated project config file into both OpenCode client loaders.
   // Project discovery differs across V1 and V2, especially outside a Git checkout.
   env.OPENCODE_CONFIG = configPath;
-  const listed = await run(cli, ["mcp", "list"], env, 120000);
-  const text = listed.stdout + "\n" + listed.stderr;
-  assert.match(text, /apex-context/i, "OpenCode must discover Apex in the client config");
-  assert.match(text, /connected/i, "OpenCode must establish an MCP connection");
+  let listing = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const listed = await run(cli, ["mcp", "list"], env, 35000);
+    listing = listed.stdout + "\n" + listed.stderr;
+    if (/apex-context/i.test(listing) && /connected/i.test(listing)) break;
+    await new Promise(resolve => setTimeout(resolve, 1200));
+  }
+  assert.match(listing, /apex-context/i, "OpenCode must discover Apex in the client config");
+  assert.match(listing, /connected/i, "OpenCode must establish an MCP connection");
   let running;
   try {
     running = await run(cli, ["--print-logs", "--log-level", "DEBUG", "run",
