@@ -33,8 +33,10 @@ export async function watchWorkspaceMemory(
   const root = path.resolve(options.root || process.env.APEX_CONTEXT_ROOT || process.cwd());
   const rootHash = getWorkspaceRootHash(root);
   const existing = watchers.get(rootHash);
+  if (existing?.status.status === "watching") return existing.status;
   if (existing) {
-    return existing.status;
+    await existing.watcher.close();
+    watchers.delete(rootHash);
   }
 
   const status: WatcherStatus = {
@@ -89,6 +91,22 @@ export async function refreshChangedWorkspaceFiles(
   ].join("\n");
 }
 
+/** Explicit, idempotent cleanup of watcher and outstanding refresh timer. */
+export async function stopWorkspaceMemory(root = process.env.APEX_CONTEXT_ROOT || process.cwd()): Promise<WatcherStatus> {
+  const canonical = path.resolve(root);
+  const key = getWorkspaceRootHash(canonical);
+  const active = watchers.get(key);
+  const timer = debounceTimers.get(key);
+  if (timer) clearTimeout(timer);
+  debounceTimers.delete(key);
+  if (!active) return getWatcherStatus(canonical);
+  await active.watcher.close();
+  watchers.delete(key);
+  active.status.status = "stopped";
+  active.status.backend = "none";
+  return active.status;
+}
+
 export function getWatcherStatus(root = process.cwd()): WatcherStatus {
   const resolvedRoot = path.resolve(root);
   const rootHash = getWorkspaceRootHash(resolvedRoot);
@@ -122,6 +140,23 @@ async function createChokidarWatcher(
   watcher.on("error", (err) => {
     status.status = "unavailable";
     status.message = err instanceof Error ? err.message : String(err);
+    const key = getWorkspaceRootHash(root);
+    void (async () => {
+      const active = watchers.get(key);
+      if (!active || active.watcher !== watcher) return;
+      try {
+        await watcher.close();
+        const replacement = createFsWatcher(root, status);
+        status.status = "watching";
+        status.message = "chokidar failed; using nonrecursive fs.watch fallback";
+        watchers.set(key, { watcher: replacement, status });
+      } catch (fallbackError) {
+        status.backend = "none";
+        status.status = "unavailable";
+        status.message += "; fallback failed: " + String(fallbackError);
+        watchers.delete(key);
+      }
+    })();
   });
 
   return watcher;
@@ -192,7 +227,10 @@ function debounceRefresh(root: string): void {
   debounceTimers.set(
     rootHash,
     setTimeout(() => {
-      void refreshChangedWorkspaceFiles({ root }).catch(() => undefined);
+      void refreshChangedWorkspaceFiles({ root }).catch((error: unknown) => {
+        const active = watchers.get(rootHash);
+        if (active) active.status.message = "Watcher-triggered refresh failed: " + String(error);
+      });
     }, 750),
   );
 }
