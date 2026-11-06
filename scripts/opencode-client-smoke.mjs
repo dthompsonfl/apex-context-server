@@ -82,9 +82,17 @@ try {
   const text = listed.stdout + "\n" + listed.stderr;
   assert.match(text, /apex-context/i, "OpenCode must discover Apex in the client config");
   assert.match(text, /connected/i, "OpenCode must establish an MCP connection");
-  const running = await run(cli, ["run", "--model", "fixture/fixture", "--format", "json",
-    "Use apex-context locate_code for Button, then read_context_bundle for its declaration. Do not use shell."],
-    env, 150000);
+  let running;
+  try {
+    running = await run(cli, ["--print-logs", "--log-level", "DEBUG", "run",
+      "--model", "fixture/fixture", "--format", "json",
+      "Use apex-context locate_code for Button, then read_context_bundle for its declaration. Do not use shell."],
+      env, 75000);
+  } catch (error) {
+    throw new Error("OpenCode agent session failed after mock provider requests=" + model.step
+      + ", advertised tool counts=" + JSON.stringify(model.observations.map(item => item.advertised.length))
+      + ": " + String(error));
+  }
   assert.ok(model.step >= 3, "OpenCode must execute both Apex tools and return results to the model stub");
   const output = running.stdout + "\n" + running.stderr;
   assert.match(output, /apex.context/i, "OpenCode session must contain Apex tool events");
