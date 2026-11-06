@@ -162,14 +162,31 @@ export function deleteJsoncValue(raw, path) {
   }
   return raw.slice(0, field.start) + raw.slice(field.end);
 }
-export function configWithApex(raw, server) {
+export function configWithApex(raw, server, client = "v1") {
   const base = raw || "{}\n";
-  if (hasJsoncProperty(base, ["mcp"])) return setJsoncValue(base, ["mcp", "apex-context"], server);
-  return setJsoncValue(base, ["mcp"], { "apex-context": server });
+  if (client !== "v1" && client !== "v2") throw new Error("Unsupported OpenCode client");
+  if (!hasJsoncProperty(base, ["mcp"])) {
+    return setJsoncValue(base, ["mcp"], client === "v2"
+      ? { servers: { "apex-context": server } }
+      : { "apex-context": server });
+  }
+  if (client === "v2") {
+    if (!hasJsoncProperty(base, ["mcp", "servers"])) {
+      return setJsoncValue(base, ["mcp", "servers"], { "apex-context": server });
+    }
+    return setJsoncValue(base, ["mcp", "servers", "apex-context"], server);
+  }
+  return setJsoncValue(base, ["mcp", "apex-context"], server);
 }
-export function configWithoutApex(raw, createdMcp) {
-  if (!hasJsoncProperty(raw, ["mcp", "apex-context"])) return raw;
-  let next = deleteJsoncValue(raw, ["mcp", "apex-context"]);
+
+export function configWithoutApex(raw, createdMcp, client = "v1") {
+  const prefix = client === "v2" ? ["mcp", "servers"] : ["mcp"];
+  const full = [...prefix, "apex-context"];
+  if (!hasJsoncProperty(raw, full)) return raw;
+  let next = deleteJsoncValue(raw, full);
+  if (client === "v2" && findObject(next, prefix)?.fields.length === 0) {
+    next = deleteJsoncValue(next, prefix);
+  }
   if (createdMcp && findObject(next, ["mcp"])?.fields.length === 0) next = deleteJsoncValue(next, ["mcp"]);
   return next;
 }
