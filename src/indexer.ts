@@ -5,7 +5,7 @@ import path from "node:path";
 import fg from "fast-glob";
 import { updateUsageState } from "./usage-state.js";
 import { atomicWritePrivateFile, cleanStaleCacheTemps } from "./atomic-cache.js";
-import { authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, assertIndexBudget, IndexBudgetExceeded, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
+import { readAuthorizedSource, authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, assertIndexBudget, IndexBudgetExceeded, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
 import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
 const INDEX_SCHEMA_VERSION = 6;
@@ -405,16 +405,16 @@ async function buildWorkspaceIndexInternal(options: BuildIndexOptions): Promise<
         diagnostics.largeFilesIgnored.push({ path: toRelativePath(root, absolutePath), reason: "File exceeds 1 MiB" });
         continue;
       }
-      const safePath = authorizeFile(root, absolutePath);
+      authorizeFile(root, absolutePath);
       assertIndexBudget(indexedBytes + fileStat.size, indexedLineCount);
-      const text = await readFile(safePath, "utf8");
+      const { text } = await readAuthorizedSource(root, absolutePath);
       const nextLines = (text.match(/\n/g)?.length ?? 0) + 1;
       assertIndexBudget(indexedBytes + fileStat.size, indexedLineCount + nextLines);
       indexedBytes += fileStat.size;
       indexedLineCount += nextLines;
       const contentHash = hashContent(text);
       const sourceFile = INDEXABLE_SOURCE_EXTENSIONS.has(ext)
-        ? project.addSourceFileAtPathIfExists(absolutePath)
+        ? project.createSourceFile(absolutePath, text, { overwrite: true })
         : undefined;
       const relativePath = toRelativePath(root, absolutePath);
       const fileId = indexedFiles.length;
@@ -1735,7 +1735,7 @@ async function isPersistedIndexFresh(index: WorkspaceIndex): Promise<boolean> {
       authorizeFile(index.root, absolutePath);
       const fileStat = await stat(absolutePath);
       // Content hashes are checked even when mtime and size have been preserved.
-      const text = await readFile(absolutePath, "utf8");
+      const { text } = await readAuthorizedSource(index.root, absolutePath);
       if (fileStat.size !== fingerprint.sizeBytes || hashContent(text) !== fingerprint.contentHash) return false;
     } catch {
       return false;
