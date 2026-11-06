@@ -56,7 +56,7 @@ try {
     "--scope", "project", "--client", client], env, 180000);
   const configPath = path.join(project, "opencode.json");
   const config = JSON.parse(await readFile(configPath, "utf8"));
-  model = await createMockToolModel();
+  model = await createMockToolModel({ workspace: project });
   if (client === "v1") {
     config.provider = {
       fixture: {
@@ -102,10 +102,11 @@ try {
       env, 75000);
   } catch (error) {
     throw new Error("OpenCode agent session failed after mock provider requests=" + model.step
-      + ", advertised tools=" + JSON.stringify(model.observations.map(item => item.advertised))
+      + ", probes=" + model.probes + ", advertised tools=" + JSON.stringify(model.observations.map(item => item.advertised))
       + ": " + String(error));
   }
-  assert.ok(model.step >= 3, "OpenCode must execute both Apex tools and return results to the model stub");
+  assert.equal(model.verifiedLocate, true, "Apex locate_code result must return to the model");
+  assert.equal(model.verifiedBundle, true, "Apex read_context_bundle result must return to the model");
   const output = running.stdout + "\n" + running.stderr;
   assert.match(output, /apex.context/i, "OpenCode session must contain Apex tool events");
   console.log("OPENCODE_CLIENT_SMOKE_PASS: " + version + " (" + client
