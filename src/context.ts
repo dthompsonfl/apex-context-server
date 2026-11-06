@@ -204,9 +204,10 @@ async function readNearestPackageJson(
 ): Promise<{ name?: string; version?: string } | null> {
   let dir = path.dirname(path.join(root, relativeFile));
 
-  while (dir.startsWith(root)) {
+  while (dir === root || (!path.relative(root, dir).startsWith(".." + path.sep) && path.relative(root, dir) !== ".." && !path.isAbsolute(path.relative(root, dir)))) {
     try {
-      return JSON.parse(await readFile(path.join(dir, "package.json"), "utf8")) as {
+      const pkgPath = authorizeFile(root, path.join(dir, "package.json"));
+      return JSON.parse(await readFile(pkgPath, "utf8")) as {
         name?: string;
         version?: string;
       };
