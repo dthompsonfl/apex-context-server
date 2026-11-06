@@ -102,7 +102,7 @@ try {
       env, 75000);
   } catch (error) {
     throw new Error("OpenCode agent session failed after mock provider requests=" + model.step
-      + ", advertised tool counts=" + JSON.stringify(model.observations.map(item => item.advertised.length))
+      + ", advertised tools=" + JSON.stringify(model.observations.map(item => item.advertised))
       + ": " + String(error));
   }
   assert.ok(model.step >= 3, "OpenCode must execute both Apex tools and return results to the model stub");
