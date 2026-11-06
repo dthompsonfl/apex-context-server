@@ -1,28 +1,33 @@
-# Portfolio Case Study — Apex Context Server
+# Engineering case study: Apex Context Server
 
-## Problem
-Coding agents working in large TypeScript/Next.js/Turborepo repositories need fast, structured, and safe code context (symbols, routes, imports, nearby source) over a standard protocol, without relying on slow ad hoc shell scanning or leaking sensitive file contents.
+## The engineering problem
 
-## What was implemented
-- Hardened a local **MCP (stdio)** server exposing 15 tools for indexing, search, symbol lookup, AST component context, topology, diagnostics, watcher refresh, and context bundles.
-- Added **authorized workspace boundary** enforcement and **best-effort secret redaction** across indexing and tool outputs.
-- Improved **freshness, concurrency, and safe persistence** (cache validation, per-root locking, atomic writes, corruption/stale recovery behavior).
-- Built **real MCP-client integration tests**, security/installer tests, a reproducible `demo` using the actual server/client, and a micro-benchmark script.
-- Updated CI to run typecheck/build, all test suites, smoke/demo/bench, and packaging checks across Node versions; documented limitations honestly.
+Coding agents need dependable answers about the locations and relationships of symbols, imports, routes and nearby types before editing source. A search result is not useful when its cache is stale, its client cannot call it, its output discloses unrelated sensitive files, or its installer damages a developer's configuration.
 
-## Architecture decisions & tradeoffs
-- **Local-first stdio MCP**: simple, inspectable integration; no hosted backend/vector DB.
-- **Freshness-first cache**: validates persisted indexes before reuse to avoid stale answers after external edits/branch changes.
-- **AST-assisted, not full semantic analysis**: `ts-morph` provides practical symbol/type context; complex TypeScript resolution remains best-effort and is reported via diagnostics.
-- **Defense in depth with caveats**: path containment + redaction + bounds reduce risk, but heuristic redaction is not perfect.
+## Implemented architecture
 
-## Constraints handled
-- Preserve existing 15-tool public surface and local architecture.
-- No global user config mutation in tests/demo (isolated temp config dirs).
-- External file changes observed without restarting the MCP server (freshness test/demo).
-- npm audit: 3 moderate transitive issues remain in the `ts-morph` chain; no high/critical gate failures under `--audit-level=high` (see verification).
+Apex is a local TypeScript ESM MCP stdio server with **15 public tools**, AST-based JS/TS symbol extraction, Next.js route discovery, import/importer maps, ranked line search, bounded edit-ready context bundles and local JSON indexing. This is a real tool, not a hosted assistant or demonstration mock.
 
-## Evidence-backed resume bullets (accurate)
-- Built and hardened a TypeScript/Node.js **Model Context Protocol (MCP)** stdio server with 15 tools for AST-aware code search, symbol/import context, and workspace indexing across TS/JS monorepo patterns.
-- Implemented workspace-boundary enforcement, sensitive-file exclusion, and heuristic secret redaction with automated security tests; added freshness-safe caching (validation, per-root locking, atomic persistence) verified by real MCP-client integration tests.
-- Delivered reproducible engineering workflows: real-client `smoke:mcp`/demo, installer safety checks in isolated configs, micro-benchmarks, and CI matrix validation (Node 20/22) covering integration, security, and packaging.
+The hardening work includes canonical workspace authorization, no-follow descriptor-based source parsing, authorized local tsconfig inheritance, multi-line secret filtering, query/regex/line/file/aggregate-size limits, per-root cache reconciliation, private synced atomic persistence, SIGKILL cache recovery, watcher readiness and degraded polling, and an owned reversible OpenCode installer with a durable transaction journal.
+
+## Evidence an interviewer can reproduce
+
+- `npm ci --ignore-scripts --no-fund && npm run build && npm run demo`: real MCP SDK client/server, tool discovery, code lookup and context, external file edit, redaction and root-boundary refusal.
+- `npm run smoke:package`: build an npm tarball, install it without the repository's development dependencies and invoke its installed binary through MCP.
+- `npm test`: indexing, configuration, security, root boundaries, cache crash/restart, watcher degradation, Git changes and installation recovery.
+- The dedicated OpenCode CI job uses **real `opencode-ai@1.19.5`** and validates two actual MCP calls through the agent. The deterministic local model stub selects calls but **does not simulate MCP outputs**.
+- `npm run bench`: a reproducible, small synthetic benchmark with transparent methods. No comparative improvement is claimed.
+
+Core technical files include `src/index.ts`, `src/indexer.ts`, `src/ast.ts`, `src/safety.ts`, `src/atomic-cache.ts`, `src/watcher.ts`, `scripts/opencode-transaction.mjs`, `src/mcp.integration.test.ts`, `src/cache-recovery.test.ts`, `src/installer.test.ts` and `scripts/package-smoke.mjs`. The [verification ledger](VERIFICATION.md) links actual CI evidence.
+
+## Design decisions and scope
+
+Local stdio avoids hosting and multi-tenant auth. JSON persistence keeps retrieval inspectable. Reconciliation/full rebuild is prioritized over speculative incremental postings. Unverified OpenCode V2 integration is *explicitly refused* by setup until the client's MCP registration defects are resolved and tested. No GUI, Docker, vector index, cloud service or package publication was added.
+
+## Copy-ready portfolio/resume statements
+
+- Engineered a TypeScript Model Context Protocol server exposing 15 AST-aware code navigation, dependency mapping and source-context tools for Next.js-style repositories.
+- Hardened local repository retrieval with workspace-root authorization, source redaction, bounded indexing, atomic persistence and crash-recovery regression tests.
+- Developed real-client MCP and OpenCode V1 integration tests, reversible installation tooling and reproducible clean-package demonstrations for independent technical review.
+
+**Claims not supported:** production customers, third-party adoption, reduced agent token usage, superior speed over `rg`, full security certification or OpenCode V2 compatibility. Verify the final commit's GitHub Actions checks before describing that revision as green.

@@ -1,34 +1,29 @@
 # Architecture
 
-## Overview
-Apex Context Server is a **local-first TypeScript/Node.js ESM** MCP server using **stdio** transport. It indexes an authorized workspace, builds a persistent per-root memory index, and exposes MCP tools for discovery, symbol lookup, AST context extraction, topology, diagnostics, and workspace freshness.
+Apex is a single-package TypeScript ESM MCP server that analyzes other application repositories, including Next.js/Turborepo-style workspaces.
 
-## Key modules
-- `src/index.ts` — MCP server registration/dispatch for all 15 tools; input validation, response truncation, and redaction at the tool boundary.
-- `src/indexer.ts` — workspace discovery (fast-glob), file manifest/fingerprints, symbol/line/token indexes, import graph extraction, tsconfig alias parsing (JSONC/best-effort extends), search/locate/find APIs, freshness validation, per-root build locking, atomic cache persistence, and diagnostics.
-- `src/ast.ts` — `ts-morph`-based extraction of an exported symbol plus local/imported type dependencies; enforces authorized-root file access and redacts output.
-- `src/context.ts` — agent boot context and edit-ready context bundles (target resolution, exports/imports/importers, nearby source, related tests/docs, package metadata).
-- `src/topology.ts` — workspace package manifest discovery and internal dependency graph (`apps/*`, `packages/*`, workspaces/pnpm patterns).
-- `src/watcher.ts` — workspace watcher (chokidar with `fs.watch` fallback), change recording, debounced refresh, and status reporting.
-- `src/dashboard.ts` — TUI/dashboard text combining topology, index health, diagnostics, watcher state, and guard telemetry (guard state is evidence-based; missing telemetry is reported).
-- `src/paths.ts` / `src/redact.ts` — shared path normalization, root hashing/config paths, authorized file resolution, sensitive-path classification, bounds, and redaction.
-- `scripts/*` — installer/uninstaller, `smoke:mcp` (real MCP client), `demo` (real MCP client), `bench` (micro-benchmark).
-- `opencode/*` — commands and guard plugin (default warn mode).
+## Request lifecycle
 
-## Data flow
-1. MCP client calls a tool over stdio (`index.ts`).
-2. Index-backed tools call `buildWorkspaceIndex`/query APIs (`indexer.ts`) for the resolved authorized root.
-3. Index is loaded from cache only after freshness validation (manifest, file set, content hashes on mtime/size changes, git snapshot when available); stale/corrupt/incompatible caches trigger rebuild.
-4. Search/locate results are assembled from in-memory token/posting maps; context/AST tools read source and apply root authorization + redaction.
-5. Watcher/guard can mark memory stale; the next lookup rebuilds as needed.
+1. `src/index.ts` initializes an MCP stdio server with 15 stable tool definitions and dispatches calls.
+2. `src/safety.ts` binds caller-selected roots to the canonical launch workspace, checks source paths against symlink/traversal escapes and provides redaction/size limits.
+3. `src/indexer.ts` discovers allowed files with fast-glob, extracts TS/JS declarations/imports via ts-morph, builds ranked token postings and import/importer maps, and stores redacted searchable lines plus fingerprints in local JSON.
+4. `src/context.ts` constructs an agent boot brief and edit-ready bundles; `src/ast.ts` follows exported declarations and related types; `src/topology.ts` maps workspace package dependencies.
+5. `src/watcher.ts` optionally observes changes; `src/dashboard.ts` renders plain-text diagnostics, not a GUI.
 
-## Persistence
-- Cache: `${APEX_CONTEXT_CONFIG_DIR|OPENCODE_CONFIG_DIR}/apex-context-index/<rootHash>.json` (schema-versioned, atomic write).
-- Usage/watcher/guard state: `apex-context-usage.json` (best-effort atomic updates).
-- `refresh_changed_files` performs a freshness-aware rebuild and reports changed/added/deleted files from the manifest diff; it does not claim fine-grained incremental parsing.
+The indexer reconciles live file contents, including changes outside an editor and unchanged sizes/mtimes, when a cached index is used. Per-root single-flight coordination avoids simultaneous duplicate indexing. The JSON index is written to a private temporary file, synced and atomically renamed; a killed writer leaves the previous snapshot intact. The changed-file refresh currently does a **full rebuild**, correctly reported as such. Full reconciliation costs additional IO on large projects and is intentionally measured rather than marketed as instant.
 
-## Decisions & tradeoffs
-- **Local stdio MCP** preserves simple deployment and avoids hosted dependencies.
-- **Freshness-first loading** prevents stale answers after external edits/branch changes at the cost of validation work.
-- **Heuristic redaction and bounded outputs** reduce accidental leakage/risk but are not perfect.
-- **ts-morph AST** provides practical symbol/type context for TS/JS without claiming full semantic type-checker correctness across all project configurations.
+TypeScript-aware tsconfig parsing supports comments and inherited aliases after rejecting any extends chain outside the authorized workspace, while pragmatic import resolution covers common relative, package and `@/*` references. It is not a complete language-server replacement or full conditional-exports resolver.
+
+## Installation and trust
+
+The MCP process has the caller's local OS permissions. Root containment protects MCP-exposed reads, not other tools installed on the machine. The OpenCode adapter is optional and version-specific: V1.19.5 has proven real CLI invocation; V2 is not supported until its MCP catalog works reliably. `scripts/jsonc-edit.mjs` changes only the Apex config property while retaining unrelated JSONC, and installer/uninstaller manifests plus a persistent crash-recovery journal restrict owned-file changes. Watcher failures degrade to a polling-backed reconciler.
+
+## Decisions
+
+- Local stdio, not hosted HTTP/cloud accounts: fewer services and no remote authentication.
+- TypeScript/AST indexing and JSON persistence, not vectors: inspectable results and simple offline operation.
+- Correct full refresh, not speculative incremental mutations: smaller invalidation surface.
+- Redaction/exclusions and bounded output: source is potentially sensitive.
+- Guard warnings by default: heuristic shell-search blocking must not sabotage legitimate development.
+
+See [Security](SECURITY.md) for the residual limitations.

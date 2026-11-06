@@ -1,7 +1,7 @@
 name: Build and Test
 on:
   push:
-    branches: [main, apex/**]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -22,29 +22,32 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-fund
       - name: Typecheck
         run: npm run typecheck
       - name: Build
         run: npm run build
-      - name: Unit tests
-        run: npm run test:unit
-      - name: Integration tests (MCP/freshness)
+      - name: All tests
+        run: npm test
+      - name: MCP protocol integration
         run: npm run test:integration
-      - name: Security tests
+      - name: Source safety tests
         run: npm run test:security
-      - name: Installer tests
+      - name: Installer rollback tests
         run: npm run test:installer
-      - name: smoke:mcp
+      - name: Guard behavior
+        run: npm run test:guard
+      - name: Real-client smoke
         run: npm run smoke:mcp
-      - name: demo
+      - name: Isolated recruiter demo
         run: npm run demo
-      - name: bench
+      - name: Deterministic benchmarks
         run: npm run bench
-      - name: Package dry-run
+      - name: Package contents
         run: npm pack --dry-run
+      - name: Installed tarball binary smoke
+        run: npm run smoke:package
   dependency-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -53,8 +56,40 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-fund
-      - name: Audit installed dependency graph (high+)
+      - name: Audit dependency graph
         run: npm audit --audit-level=high
+
+  opencode-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - client: v1
+            package: opencode-ai@1.19.5
+          # OpenCode V2 is intentionally not advertised as supported until its
+          # cold-start MCP catalog bug is fixed in a verified stable release.
+          # V1 remains a required, real CLI tool-call integration test.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Locked dependency installation
+        run: npm ci --ignore-scripts --no-fund
+      - name: Build MCP server
+        run: npm run build
+      - name: Install pinned real OpenCode CLI in temporary prefix
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/apex-opencode-cli"
+          npm install --prefix "$RUNNER_TEMP/apex-opencode-cli" --no-save --no-audit --no-fund "$PACKAGE_NAME"
+      - name: Verify OpenCode MCP connection AND real tool invocations
+        env:
+          OPENCODE_BIN: ${{ runner.temp }}/apex-opencode-cli/node_modules/.bin/opencode
+          CLIENT_NAME: ${{ matrix.client }}
+        run: npm run smoke:opencode -- --client "$CLIENT_NAME"

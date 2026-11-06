@@ -1,23 +1,32 @@
-# Security
+# Security and threat model
 
-## Threat model (local MCP server)
-Apex Context Server is a local, stdio MCP process intended to index and serve context for an **authorized workspace root**. Primary risks:
-- **Unauthorized file read / path traversal / symlink escape**: a caller could request `read_component_context` or a context bundle for files outside the workspace.
-- **Sensitive data exposure**: indexed source lines, context bundles, diagnostics, or persisted cache could contain secrets/tokens/credentials from synthetic or real files.
-- **Cache/state leakage**: persisted index and usage state may contain derived content; insecure permissions or unsafe writes can increase exposure/race risk.
-- **Resource exhaustion**: large files, huge queries/globs/regex, or oversized responses can degrade the host process.
-- **Installer misconfiguration**: setup/uninstall could overwrite unrelated OpenCode configuration or leave unsafe state.
+Apex runs locally under the user's OS identity. There are no remote sockets or tenant isolation, and any allowed MCP client can receive returned source context. **Never treat local execution as complete data-loss prevention.**
 
-## Controls implemented
-- **Authorized workspace boundaries**: `resolveAuthorizedFile` (realpath + containment) enforces that direct file reads (`read_component_context`) remain within the authorized root; `read_context_bundle` rejects `filepath` outside root. Glob/file discovery uses `followSymbolicLinks: false` and ignores sensitive patterns.
-- **Sensitive file exclusions**: indexing ignores common secret-bearing files (`.env*` except examples, keys, credential files, lockfiles where appropriate) and skips paths classified as sensitive.
-- **Redaction**: best-effort redaction is applied to indexed source lines, tool responses, and AST/context bundle output for common patterns (private key blocks, AWS keys, GitHub tokens, bearer/auth headers, assignment-style secrets, URL credentials). Diagnostics record redaction events. **Limitation:** pattern-based detection cannot guarantee all secrets are detected and may miss novel formats or produce false positives.
-- **Bounded resources**: query/glob length limits, max indexed file size, capped result counts, and tool-response truncation.
-- **Safe persistence**: cache/usage state writes use atomic temp+rename and restrictive permissions (best-effort `0600`/`0700`). Corrupt/incompatible/stale persisted indexes are not trusted.
-- **Installer safety**: setup supports `--dry-run`, targets isolated config dirs via `APEX_CONTEXT_CONFIG_DIR`/`OPENCODE_CONFIG_DIR`, preserves unrelated config entries, writes an ownership manifest, and uninstall removes only managed Apex entries/files.
+## Root and file policy
 
-## Residual risks / limitations
-- Redaction is heuristic and not a substitute for secret hygiene.
-- MCP clients control invocation; Apex relies on correct root scoping and local-process trust boundaries.
-- Some module-resolution/import cases (complex tsconfig extends/package exports conditions) are handled on a best-effort basis and may be reported as unresolved.
-- Guard/OpenCode integration behavior depends on the host OpenCode version/contract; not all external client environments are verified here.
+The process startup CWD or explicit `APEX_CONTEXT_ROOT` defines the authorized workspace. Request roots cannot escape it. Direct AST reads use realpath containment, reject symlink escapes, exclude common sensitive names/extensions and reject oversized files. The indexer filters generated directories, dependency caches, private-key formats, `.env*`, credentials/secret-named paths and inaccessible sources.
+
+AST and indexing code read from validated no-follow file descriptors; tsconfig inheritance is checked against the authorized root before TypeScript can process it. Untrusted repositories and other same-user processes remain outside the server's security guarantees.
+
+The index is persisted under `OPENCODE_CONFIG_DIR/apex-context-index` or the user's OpenCode config location, with restrictive initial permissions, synced private temp files, atomic replacement and crash-interruption regression tests. Existing filesystem ACLs, same-user processes and imperfect secret detection remain threats.
+
+Indexed source lines and AST/context responses receive a best-effort secret-redaction pass. Multiline private-key envelopes, common credential assignments/JSON keys, bearer tokens and selected token prefixes are covered by synthetic regression tests. **This does not catch all secrets**, unusual encodings, generated strings or adversarial formats. Do not index real credentials you cannot afford to expose.
+
+## Resource policy
+
+Maximum 1 MiB per source file, 30,000 discovered files, 64 MiB total source, 250,000 indexed lines, 2,048 characters per line, 256-character queries and 60,000-character tool outputs. Hazardous regex constructs are rejected. These are application budgets, not OS memory/CPU quotas.
+
+## Installer policy
+
+Default scope is project. Setup is opt-in, has `--dry-run`, refuses unmanaged collisions and uses an ownership/hash manifest. Uninstall refuses changed assets or changed Apex config values rather than silently deleting users' edits. It preserves other MCP entries and unrelated JSONC comments. Setup and uninstall write a persistent rollback journal, verify before/after hashes, and expose `--recover`. The tests kill the scripts with SIGKILL mid-transaction and confirm recovery. The supported client is OpenCode V1.19.5; V2 is explicitly rejected pending proven support. The raw-search guard defaults to warn; strict mode is explicitly selected and is a **workflow preference, not a security sandbox**.
+
+## Residual risks
+
+- Heuristic redaction can produce false positives and false negatives.
+- Complex JSONC formatting/comment placement may need additional compatibility tests.
+- Filesystem checks cannot prove all race conditions are eliminated.
+- Watcher fallback is not recursively equivalent on all platforms; retrieval freshness uses reconciliation.
+- Full content reconciliation may be costly on large workspaces.
+- Pinned OpenCode V1.19.5 CLI interoperability is tested with two real MCP calls. V2 is unsupported due to upstream MCP catalog behavior.
+
+A demonstrated outside-root read, credential leak or destructive uninstall is a release stop condition. Reproduce with **synthetic** material and add a regression test.

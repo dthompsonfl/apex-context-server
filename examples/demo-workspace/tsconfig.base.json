@@ -1,0 +1,4 @@
+{
+ // JSONC inheritance fixture
+ "compilerOptions": {"target":"ES2022","baseUrl":".","paths":{"@demo/ui":["packages/ui/src/index.ts"]}}
+}

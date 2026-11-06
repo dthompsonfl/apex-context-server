@@ -1,50 +1,66 @@
 #!/usr/bin/env node
-import { performance } from "node:perf_hooks";
+import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
+import { buildWorkspaceIndex, locateCode } from "../dist/indexer.js";
 
-function pct(arr, p) { const a=[...arr].sort((x,y)=>x-y); return a[Math.min(a.length-1, Math.floor(a.length*p))] ?? 0; }
-const root = await mkdtemp(path.join(os.tmpdir(), "apex-bench-"));
-const configDir = path.join(root, ".apex-config");
-await mkdir(path.join(root, "packages/shared/src"), { recursive: true });
-await mkdir(path.join(root, "apps/web/src/app"), { recursive: true });
-await mkdir(configDir, { recursive: true });
-await writeFile(path.join(root, "package.json"), JSON.stringify({name:"bench",workspaces:["apps/*","packages/*"]}));
-await writeFile(path.join(root, "packages/shared/src/util.ts"), Array.from({length:80}, (_,i)=>`export function fn${i}(x:number){ return x+${i}; }`).join("\n")+"\n");
-await writeFile(path.join(root, "apps/web/src/app/page.tsx"), `import { fn1 } from "../../../packages/shared/src/util";\nexport default function Page(){ return fn1(1) }\n`);
-const queries = ["fn1","fn42","Page","util","shared","ButtonMissing","route","fn79","page tsx","workspace"];
-const transport = new StdioClientTransport({ command: process.execPath, args: [path.resolve("dist/index.js")], cwd: root, env: { ...process.env, APEX_CONTEXT_ROOT: root, APEX_CONTEXT_CONFIG_DIR: configDir, OPENCODE_CONFIG_DIR: configDir }, stderr: "pipe" });
-const client = new Client({ name: "apex-bench", version: "1.0.0" });
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const queries = [
+  ["Button", "apps/web/src/components/Button.tsx"],
+  ["ButtonProps", "apps/web/src/components/Button.tsx"],
+  ["Panel", "packages/ui/src/Panel.tsx"],
+  ["PanelProps", "packages/ui/src/Panel.tsx"],
+  ["formatTitle", "apps/web/src/lib/format.ts"],
+  ["Page", "apps/web/src/app/page.tsx"],
+  ["RootLayout", "apps/web/src/app/layout.tsx"],
+  ["GET", "apps/web/src/app/api/health/route.ts"],
+  ["helperMemorySignal", "apps/web/src/app/page.tsx"],
+  ["testButton", "apps/web/src/components/Button.test.ts"],
+  ["@demo/ui", "apps/web/package.json"],
+  ["components", "apps/web/src/components/Button.tsx"],
+];
+const temp = await mkdtemp(path.join(os.tmpdir(), "apex-bench-"));
+const before = process.env.OPENCODE_CONFIG_DIR;
+const cold = [], lookups = [], cacheBytes = [];
+let hits1 = 0, hits5 = 0, bytes = 0, peakRss = process.memoryUsage().rss;
+const rounds = 3;
 try {
-  await client.connect(transport);
-  const t0 = performance.now();
-  await client.callTool({ name: "index_workspace", arguments: { root, force: true } });
-  const cold = performance.now()-t0;
-  const lat = [];
-  let hits = 0;
-  for (let i=0;i<30;i++) {
-    const q = queries[i%queries.length];
-    const s = performance.now();
-    const r = await client.callTool({ name: "locate_code", arguments: { root, query: q } });
-    lat.push(performance.now()-s);
-    if (JSON.stringify(r).includes("matches")) hits++;
+  for (let round = 0; round < rounds; round++) {
+    const root = path.join(temp, "workspace" + round);
+    process.env.OPENCODE_CONFIG_DIR = path.join(temp, "config" + round);
+    await cp(path.join(repo, "examples/demo-workspace"), root, { recursive: true });
+    await mkdir(process.env.OPENCODE_CONFIG_DIR, { recursive: true });
+    const started = performance.now();
+    const index = await buildWorkspaceIndex({ root, force: true });
+    cold.push(performance.now() - started);
+    cacheBytes.push((await stat(index.indexPath)).size);
+    for (const [query, expected] of queries) {
+      const start = performance.now();
+      const result = await locateCode(query, { root, maxResults: 5 });
+      lookups.push(performance.now() - start);
+      if (result.matches[0]?.file === expected) hits1++;
+      if (result.matches.some(item => item.file === expected)) hits5++;
+      bytes += Buffer.byteLength(JSON.stringify(result), "utf8");
+      peakRss = Math.max(peakRss, process.memoryUsage().rss);
+    }
   }
-  const mem = process.memoryUsage();
-  console.log(JSON.stringify({
-    environment: { node: process.version, platform: process.platform, arch: process.arch, cpus: os.cpus()?.[0]?.model },
-    corpus: { filesApprox: 3, queries: queries.length, iterations: 30 },
-    coldIndexMs: Math.round(cold),
-    warmLocateP50Ms: Math.round(pct(lat,0.5)),
-    warmLocateP95Ms: Math.round(pct(lat,0.95)),
-    processRssMiB: Math.round(mem.rss/1024/1024),
-    responseShapeChecks: hits,
-    notes: "Micro-benchmark on synthetic fixture; not a claim of real-world productivity gains."
-  }, null, 2));
 } finally {
-  try { await client.close(); } catch {}
-  try { await transport.close(); } catch {}
-  await rm(root, { recursive: true, force: true });
+  if (before === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+  else process.env.OPENCODE_CONFIG_DIR = before;
+  await rm(temp, { recursive: true, force: true });
 }
+const percentile = (values, fraction) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  return Math.round(sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * fraction) - 1)] * 100) / 100;
+};
+console.log(JSON.stringify({
+  node: process.version, platform: process.platform, arch: process.arch,
+  fixture: "examples/demo-workspace", runs: rounds, queriesPerRun: queries.length,
+  coldIndexMs: cold.map(n => Math.round(n * 100) / 100),
+  lookupP50Ms: percentile(lookups, 0.5), lookupP95Ms: percentile(lookups, 0.95),
+  hitAt1: hits1 / (queries.length * rounds), hitAt5: hits5 / (queries.length * rounds),
+  peakProcessRssBytes: peakRss, cacheBytes, meanResponseBytes: Math.round(bytes / lookups.length),
+  limitations: "Tiny synthetic dataset; process RSS is not isolated to indexer; no baseline comparator or agent-productivity claim."
+}, null, 2));

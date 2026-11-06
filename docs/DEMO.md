@@ -1,40 +1,39 @@
-# Demo
+# Clean-room demonstration
 
-## Prerequisites
-- Node.js >= 18 (verified in this environment on Node 24.x; CI tests Node 20/22).
-- Dependencies installed and project built.
+Requires Node 20 or 22 and npm. No private repository, API key, OpenCode installation or Docker.
 
-## Run
 ```bash
+git clone https://github.com/dthompsonfl/apex-context-server.git
+cd apex-context-server
 npm ci --ignore-scripts --no-fund
+npm run typecheck
 npm run build
 npm run demo
 ```
 
-## What the demo does (real MCP client + real stdio server)
-1. Creates an **isolated temporary** demo workspace (no user/global config changes).
-2. Launches the compiled `dist/index.js` MCP server over stdio.
-3. Connects a real MCP client (`@modelcontextprotocol/sdk`).
-4. Lists registered tools (expects 15).
-5. Indexes the demo workspace.
-6. Locates a symbol/route/component (`Button`/`Page`) and retrieves edit-ready context.
-7. Modifies a workspace file externally and retrieves fresh results **without restarting** the server (`ButtonSentinel`).
-8. Verifies synthetic-secret redaction and authorized-root protection.
-9. Closes client/server and removes temporary resources.
-10. Exits nonzero on assertion failure.
+`scripts/demo.mjs` copies `examples/demo-workspace` to a temporary location, launches a real `Client` and `StdioClientTransport` against `dist/index.js` and verifies:
 
-## Expected output (representative)
-```text
-1) MCP connected
-2) Tools listed: 15
-Workspace Memory - ...
-3) Workspace indexed
-4) locate_code(Button): ...
-5) read_context_bundle(Page) returned
-6) Freshness after external edit (no restart): ButtonSentinel found
-7) Synthetic secret redaction: PASS
-8) Outside-root protection: PASS
-DEMO PASS
+1. MCP initialize and exactly 15 tools.
+2. Real workspace indexing, symbol lookup and Next.js page lookup.
+3. An edit-ready `Button` bundle containing its props.
+4. An external file creation reflected on the same live MCP connection.
+5. Synthetic multiline private-key redaction in AST context.
+6. Rejection of source reads outside the authorized workspace.
+7. Nonzero exit on failed assertions and cleanup of temporary paths.
+
+Expected final message: `DEMO PASSED`. The actual returned paths/counts depend on the fixture and revision. This is not simulated output.
+
+Additional checks: `npm run smoke:mcp`, `npm run test:security`, `npm run test:installer`, `npm run bench` and `npm run smoke:package`, which installs the package tarball in an isolated prefix and invokes its installed executable via MCP.
+
+For manual Inspector use after independently installing an appropriate CLI release:
+
+```bash
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
 ```
 
-Exact counts/timings vary by machine.
+The Inspector is not required by CI. The supported OpenCode V1.19.5 client is separately installed into a clean runner prefix. CI connects with `opencode mcp list` and uses real agent/tool calls to retrieve Apex code location and context bundle. A deterministic local model stub requests the calls but does not fabricate MCP results. V2 remains unsupported due to client-side MCP catalog defects.
+
+Troubleshooting: missing dist means run `npm run build`; missing modules means `npm ci`; corrupt cache means stop the process and remove only the matching cache JSON; installer ownership conflicts require reviewing the manifest rather than force-removing user files.
+
+
+Interrupted setup or uninstall: invoke the original script with `--scope project --recover`. The persisted transaction journal verifies ownership hashes and restores the previous state. Do not manually delete user files.

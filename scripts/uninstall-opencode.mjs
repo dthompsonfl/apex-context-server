@@ -1,73 +1,89 @@
 #!/usr/bin/env node
-
-import { access, lstat, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+/** Manifest-controlled, crash-recoverable OpenCode uninstall. */
+import { lstat, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { configWithoutApex, getJsoncValue, hasJsoncProperty } from "./jsonc-edit.mjs";
+import { applyTransaction, exists, journalPath, managedHash, recoverTransaction } from "./opencode-transaction.mjs";
 
-const opencodeDir = path.resolve(
-  process.env.APEX_CONTEXT_CONFIG_DIR ||
-    process.env.OPENCODE_CONFIG_DIR ||
-    path.join(os.homedir(), ".config", "opencode"),
-);
-const configPath = path.join(opencodeDir, "opencode.json");
-const manifestPath = path.join(opencodeDir, "apex-context-install-manifest.json");
-const args = new Set(process.argv.slice(2));
-const DRY_RUN = args.has("--dry-run");
+const args = process.argv.slice(2);
+function flag(name, fallback) {
+  const i = args.indexOf(name);
+  return i < 0 ? fallback : args[i + 1];
+}
+const scope = flag("--scope", "project");
+const dryRun = args.includes("--dry-run");
+const recoverOnly = args.includes("--recover");
+if (!["project", "user"].includes(scope)) throw new Error("Usage: uninstall-opencode.mjs [--scope project|user] [--dry-run|--recover]");
+const project = path.resolve(process.env.APEX_CONTEXT_PROJECT_DIR || process.cwd());
+const directory = scope === "project"
+  ? path.join(project, ".opencode")
+  : path.resolve(process.env.OPENCODE_CONFIG_DIR || path.join(os.homedir(), ".config/opencode"));
+const configPath = scope === "project" ? path.join(project, "opencode.json") : path.join(directory, "opencode.json");
+const manifestPath = path.join(directory, "apex-context-manifest.json");
+const knownPaths = [
+  path.join(directory, "apex-context-server"),
+  path.join(directory, "apex-context-instructions.md"),
+  ...["apex.md", "apex-boot.md", "apex-find.md", "apex-status.md", "apex-where.md", "apex-refresh.md"]
+    .map(name => path.join(directory, "commands", name)),
+  path.join(directory, "plugins/apex-context-guard.js"),
+];
+const allowed = [configPath, manifestPath, ...knownPaths];
 
-try {
-  const manifest = await readManifest();
-  const managed = manifest?.managedFiles?.length ? manifest.managedFiles : defaultManaged();
-  if (DRY_RUN) {
-    console.log(JSON.stringify({ dryRun: true, opencodeDir, managed, manifestFound: Boolean(manifest) }, null, 2));
-    process.exit(0);
+async function main() {
+  if (await exists(directory) && (await lstat(directory)).isSymbolicLink()) {
+    throw new Error("OpenCode config directory cannot be a symlink");
   }
-  await removeConfigEntries();
-  for (const targetPath of managed) await removePath(targetPath);
-  await removePath(manifestPath);
-  console.log(`Apex Context Server removed from OpenCode config at ${opencodeDir}.`);
-} catch (err) {
-  console.error(`Apex Context Server uninstall failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-}
-
-async function readManifest() {
-  try { return JSON.parse(await readFile(manifestPath, "utf8")); } catch { return null; }
-}
-
-function defaultManaged() {
-  return [
-    path.join(opencodeDir, "apex-context-server"),
-    path.join(opencodeDir, "apex-context-instructions.md"),
-    path.join(opencodeDir, "commands", "apex.md"),
-    path.join(opencodeDir, "commands", "apex-boot.md"),
-    path.join(opencodeDir, "commands", "apex-find.md"),
-    path.join(opencodeDir, "commands", "apex-status.md"),
-    path.join(opencodeDir, "commands", "apex-where.md"),
-    path.join(opencodeDir, "commands", "apex-refresh.md"),
-    path.join(opencodeDir, "plugins", "apex-context-guard.js"),
-  ];
-}
-
-async function removeConfigEntries() {
-  if (!(await exists(configPath))) return;
+  if (recoverOnly) {
+    const recovered = await recoverTransaction(directory, allowed);
+    console.log(recovered ? "Recovered incomplete Apex transaction" : "No incomplete transaction");
+    return;
+  }
+  if (await exists(journalPath(directory))) {
+    throw new Error("Incomplete Apex transaction exists. Use --recover first.");
+  }
+  if (!await exists(manifestPath)) throw new Error("No Apex ownership manifest; refusing to delete unmanaged files");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (![1, 2].includes(manifest.version) || manifest.scope !== scope ||
+      manifest.configPath !== configPath) throw new Error("Apex manifest scope/version/path mismatch");
+  const client = manifest.client ?? "v1";
+  if (!["v1", "v2"].includes(client)) throw new Error("Unsupported installed client version");
+  if (!await exists(configPath)) throw new Error("Managed OpenCode config is missing; refusing deletion");
   const raw = await readFile(configPath, "utf8");
-  const config = JSON.parse(raw);
-  if (config.mcp && typeof config.mcp === "object") delete config.mcp["apex-context"];
-  if (config.tools && typeof config.tools === "object") delete config.tools["apex-context*"];
-  if (Array.isArray(config.instructions)) {
-    config.instructions = config.instructions.filter((item) => item !== path.join(opencodeDir, "apex-context-instructions.md"));
+  const entry = client === "v1" ? ["mcp", "apex-context"] : ["mcp", "servers", "apex-context"];
+  if (!hasJsoncProperty(raw, entry) ||
+      JSON.stringify(getJsoncValue(raw, entry)) !== JSON.stringify(manifest.server)) {
+    throw new Error("Apex MCP entry was changed; refusing to delete user settings");
   }
-  await atomicWrite(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  const paths = Object.keys(manifest.owned ?? {});
+  const expected = new Set(knownPaths);
+  if (paths.length !== knownPaths.length || paths.some(target => !expected.has(target))) {
+    throw new Error("Manifest ownership list differs from the supported Apex asset set");
+  }
+  for (const target of paths) {
+    if (!await exists(target)) throw new Error("Owned file is missing: " + target);
+    if (await managedHash(target) !== manifest.owned[target]) {
+      throw new Error("Owned file was modified, refusing uninstall: " + target);
+    }
+  }
+  const nextRaw = configWithoutApex(raw, manifest.mcpCreated, client);
+  const shouldDeleteConfig = manifest.configCreated && nextRaw.trim() === "{}";
+  console.log(JSON.stringify({
+    action: dryRun ? "preview" : "uninstall", scope, client, configPath, ownedPaths: paths,
+  }, null, 2));
+  if (dryRun) return;
+  const changes = [
+    ...paths.map(target => ({ target, kind: "delete" })),
+    shouldDeleteConfig
+      ? { target: configPath, kind: "delete" }
+      : { target: configPath, kind: "file", content: nextRaw },
+    { target: manifestPath, kind: "delete" },
+  ];
+  await applyTransaction(directory, changes, allowed);
+  console.log("Removed only verified Apex-owned assets and config entry; unrelated settings retained.");
 }
 
-async function atomicWrite(target, content) {
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, content, { encoding: "utf8", mode: 0o600 });
-  await rename(tmp, target);
-}
-async function removePath(targetPath) {
-  if (!(await exists(targetPath))) return;
-  const st = await lstat(targetPath);
-  if (st.isSymbolicLink()) await unlink(targetPath); else await rm(targetPath, { recursive: true, force: true });
-}
-async function exists(targetPath) { try { await access(targetPath); return true; } catch { return false; } }
+main().catch(error => {
+  console.error("Apex uninstall failed: " + error.message);
+  process.exitCode = 1;
+});
