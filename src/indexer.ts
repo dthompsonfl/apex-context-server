@@ -1690,7 +1690,16 @@ async function readPersistedIndexUnchecked(
 ): Promise<WorkspaceIndex | null> {
   try {
     const parsed = JSON.parse(await readFile(indexPath, "utf8")) as WorkspaceIndex;
-    if (parsed.schemaVersion !== INDEX_SCHEMA_VERSION || parsed.root !== root) {
+    if (
+      parsed.schemaVersion !== INDEX_SCHEMA_VERSION ||
+      parsed.root !== root ||
+      !Array.isArray(parsed.files) ||
+      !Array.isArray(parsed.symbols) ||
+      !Array.isArray(parsed.lines) ||
+      !parsed.manifest || typeof parsed.manifest !== "object" ||
+      Array.isArray(parsed.manifest) ||
+      !parsed.diagnostics || typeof parsed.diagnostics !== "object"
+    ) {
       return null;
     }
     parsed.indexPath = indexPath;
