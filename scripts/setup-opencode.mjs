@@ -47,7 +47,7 @@ const managedPaths = [installDir, instructionsPath, ...assets.map(asset => asset
 const allowed = [configPath, manifestPath, ...managedPaths];
 const server = client === "v1"
   ? { type: "local", command: [process.execPath, path.join(installDir, "dist/index.js")], enabled: true, timeout: 30000 }
-  : { type: "local", command: [process.execPath, path.join(installDir, "dist/index.js")], cwd: projectDir, codemode: false };
+  : { type: "local", command: [process.execPath, path.join(installDir, "dist/index.js")], cwd: projectDir, codemode: true };
 const mcpPath = client === "v1" ? ["mcp", "apex-context"] : ["mcp", "servers", "apex-context"];
 const otherPath = client === "v1" ? ["mcp", "servers", "apex-context"] : ["mcp", "apex-context"];
 
