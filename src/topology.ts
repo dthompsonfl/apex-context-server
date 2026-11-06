@@ -1,7 +1,7 @@
 import fg from "fast-glob";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { authorizeFile, isSensitivePath } from "./safety.js";
+import { authorizeFile, isSensitivePath, readAuthorizedSource } from "./safety.js";
 
 export interface PackageMeta {
   name: string;
@@ -34,7 +34,7 @@ export async function getWorkspaceTopology(
     if (isSensitivePath(path.relative(cwd, filePath))) continue;
     try {
       const allowed = authorizeFile(cwd, filePath);
-      const pkg = JSON.parse(await readFile(allowed, "utf8")) as PackageJson;
+      const pkg = JSON.parse((await readAuthorizedSource(cwd, allowed)).text) as PackageJson;
       if (!pkg.name || typeof pkg.name !== "string") {
         continue;
       }
@@ -130,7 +130,7 @@ async function getWorkspacePackagePatterns(root: string): Promise<string[]> {
   ]);
 
   try {
-    const rootPkg = JSON.parse(await readFile(authorizeFile(root, "package.json"), "utf8")) as PackageJson;
+    const rootPkg = JSON.parse((await readAuthorizedSource(root, "package.json")).text) as PackageJson;
     for (const workspace of normalizeWorkspaces(rootPkg.workspaces).filter(isSafeWorkspaceGlob)) {
       patterns.add(`${workspace.replace(/\/?$/, "")}/package.json`);
     }
@@ -139,7 +139,7 @@ async function getWorkspacePackagePatterns(root: string): Promise<string[]> {
   }
 
   try {
-    const pnpmWorkspace = await readFile(authorizeFile(root, "pnpm-workspace.yaml"), "utf8");
+    const pnpmWorkspace = (await readAuthorizedSource(root, "pnpm-workspace.yaml")).text;
     for (const workspace of parsePnpmWorkspacePackages(pnpmWorkspace).filter(isSafeWorkspaceGlob)) {
       patterns.add(`${workspace.replace(/\/?$/, "")}/package.json`);
     }
