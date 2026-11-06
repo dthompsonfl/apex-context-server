@@ -26,6 +26,7 @@ import {
   getWatcherStatus,
   refreshChangedWorkspaceFiles,
   watchWorkspaceMemory,
+  stopWorkspaceMemory,
 } from "./watcher.js";
 
 const server = new Server(
@@ -99,6 +100,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description:
               "Optional workspace root. Defaults to the MCP process working directory.",
           },
+          action: { type: "string", enum: ["start", "status", "stop"], description: "Optional watcher lifecycle action (default: start)." },
         },
         required: [],
       },
@@ -399,9 +401,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case "watch_workspace_memory":
       return asToolResult(async () => {
-        const status = await watchWorkspaceMemory({
-          root: authorizedRoot(optionalString(input.root, "root")),
-        });
+        const root = authorizedRoot(optionalString(input.root, "root"));
+        const action = optionalString(input.action, "action") ?? "start";
+        if (!["start", "status", "stop"].includes(action)) throw new Error("Invalid watcher action");
+        const status = action === "stop"
+          ? await stopWorkspaceMemory(root)
+          : action === "status" ? getWatcherStatus(root) : await watchWorkspaceMemory({ root });
         return JSON.stringify(status, null, 2);
       }, "Error starting Apex workspace watcher");
 
