@@ -92,7 +92,7 @@ try {
   assert.match(listing, /connected/i, "OpenCode must establish an MCP connection");
   let running;
   try {
-    running = await run(cli, ["--print-logs", "--log-level", "DEBUG", "run",
+    running = await run(cli, ["--print-logs", "--log-level", client === "v2" ? "debug" : "DEBUG", "run",
       "--model", "fixture/fixture", "--format", "json",
       "Use apex-context locate_code for Button, then read_context_bundle for its declaration. Do not use shell."],
       env, 75000);
