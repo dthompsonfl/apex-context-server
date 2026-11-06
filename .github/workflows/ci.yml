@@ -60,3 +60,35 @@ jobs:
         run: npm ci --ignore-scripts --no-fund
       - name: Audit dependency graph
         run: npm audit --audit-level=high
+
+  opencode-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - client: v1
+            package: opencode-ai@1.19.5
+          - client: v2
+            package: "@opencode/cli@2.0.32"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Locked dependency installation
+        run: npm ci --ignore-scripts --no-fund
+      - name: Build MCP server
+        run: npm run build
+      - name: Install pinned real OpenCode CLI in temporary prefix
+        env:
+          PACKAGE_NAME: ${{ matrix.package }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/apex-opencode-cli"
+          npm install --prefix "$RUNNER_TEMP/apex-opencode-cli" --no-save --no-audit --no-fund "$PACKAGE_NAME"
+      - name: Verify OpenCode MCP connection AND real tool invocations
+        env:
+          OPENCODE_BIN: ${{ runner.temp }}/apex-opencode-cli/node_modules/.bin/opencode
+          CLIENT_NAME: ${{ matrix.client }}
+        run: npm run smoke:opencode -- --client "$CLIENT_NAME"

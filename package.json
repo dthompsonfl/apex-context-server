@@ -30,7 +30,8 @@
     "demo": "node scripts/demo.mjs",
     "bench": "node scripts/bench.mjs",
     "test:guard": "node --test scripts/guard.test.mjs",
-    "smoke:package": "node scripts/package-smoke.mjs"
+    "smoke:package": "node scripts/package-smoke.mjs",
+    "smoke:opencode": "node scripts/opencode-client-smoke.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
