@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { authorizeFile, boundedOutput } from "./safety.js";
 import { extractComponentContext } from "./ast.js";
 import {
   buildWorkspaceIndex,
@@ -82,8 +83,9 @@ export async function readContextBundle(
     throw new Error("Could not resolve a bundle target from filepath, nodeName, or query.");
   }
 
-  const relatedTests = findRelatedFiles(index, target, ["test", "spec"]);
-  const relatedDocs = findRelatedFiles(index, target, ["md", "mdx"]);
+  const maxRelated = Math.min(30, Math.max(0, Math.trunc(options.maxRelated ?? 8)));
+  const relatedTests = findRelatedFiles(index, target, ["test", "spec"]).slice(0, maxRelated);
+  const relatedDocs = findRelatedFiles(index, target, ["md", "mdx"]).slice(0, maxRelated);
   const packageMeta = await readNearestPackageJson(index.root, target.path);
   const nearbyLines = getNearbyLines(index, target, options.nodeName);
   const componentContext =
@@ -93,7 +95,7 @@ export async function readContextBundle(
         )
       : "";
 
-  return [
+  return boundedOutput([
     "Apex Context Bundle",
     "===================",
     "",
@@ -134,7 +136,7 @@ export async function readContextBundle(
       ? nearbyLines.map((line) => `${line.line}: ${line.text}`).join("\n")
       : "(not available)",
     componentContext ? `\n${componentContext}` : "",
-  ].join("\n");
+  ].join("\n"));
 }
 
 async function resolveBundleTarget(
