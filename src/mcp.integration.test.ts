@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -95,7 +95,11 @@ test("real stdio MCP discovers and invokes all 15 public tools with live source,
     assert.match(contents(found), /ChangedWidget/);
     const old = await client.callTool({ name: "find_symbol", arguments: { query: "NewWidget", exact: true } });
     assert.doesNotMatch(contents(old), /"name": "NewWidget"/);
-    await rm(added);
+    const renamed = path.join(root, "apps/web/src/components/RenamedWidget.tsx");
+    await rename(added, renamed);
+    const moved = await client.callTool({ name: "find_symbol", arguments: { query: "ChangedWidget", exact: true } });
+    assert.match(contents(moved), /RenamedWidget.tsx/);
+    await rm(renamed);
     const deleted = await client.callTool({ name: "find_symbol", arguments: { query: "ChangedWidget", exact: true } });
     assert.doesNotMatch(contents(deleted), /"name": "ChangedWidget"/);
 
@@ -118,6 +122,9 @@ test("real stdio MCP discovers and invokes all 15 public tools with live source,
     assert.notEqual(cache.isError, true);
     const saved = await readFile(path.join(config, "apex-context-index", (await import("node:crypto")).createHash("sha256").update(root).digest("hex").slice(0, 20) + ".json"), "utf8");
     assert.doesNotMatch(saved, /SYNTHETIC_PRIVATE_KEY_NOT_VALID_ONLY_FOR_TESTING/);
+    const stopped = await client.callTool({ name: "watch_workspace_memory", arguments: { action: "stop" } });
+    assert.notEqual(stopped.isError, true);
+    assert.equal(JSON.parse(contents(stopped)).status, "stopped");
   } finally {
     await client.close().catch(() => {});
     await rm(temp, { recursive: true, force: true });
