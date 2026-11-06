@@ -5,7 +5,7 @@ import path from "node:path";
 import fg from "fast-glob";
 import { updateUsageState } from "./usage-state.js";
 import { atomicWritePrivateFile, cleanStaleCacheTemps } from "./atomic-cache.js";
-import { authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
+import { authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, assertIndexBudget, IndexBudgetExceeded, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
 import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
 const INDEX_SCHEMA_VERSION = 6;
@@ -389,6 +389,8 @@ async function buildWorkspaceIndexInternal(options: BuildIndexOptions): Promise<
   const importTokenIndex: Record<string, number[]> = {};
   const manifest: Record<string, IndexedFileFingerprint> = {};
   const diagnostics = createDiagnostics("full");
+  let indexedBytes = 0;
+  let indexedLineCount = 0;
 
   for (const absolutePath of files.sort()) {
     if (isSensitivePath(path.relative(root, absolutePath))) continue;
@@ -404,7 +406,12 @@ async function buildWorkspaceIndexInternal(options: BuildIndexOptions): Promise<
         continue;
       }
       const safePath = authorizeFile(root, absolutePath);
+      assertIndexBudget(indexedBytes + fileStat.size, indexedLineCount);
       const text = await readFile(safePath, "utf8");
+      const nextLines = (text.match(/\n/g)?.length ?? 0) + 1;
+      assertIndexBudget(indexedBytes + fileStat.size, indexedLineCount + nextLines);
+      indexedBytes += fileStat.size;
+      indexedLineCount += nextLines;
       const contentHash = hashContent(text);
       const sourceFile = INDEXABLE_SOURCE_EXTENSIONS.has(ext)
         ? project.addSourceFileAtPathIfExists(absolutePath)
@@ -449,6 +456,7 @@ async function buildWorkspaceIndexInternal(options: BuildIndexOptions): Promise<
       addSymbolTokens(symbolNameIndex, symbolTokenIndex, fileSymbols);
       addContentLines(tokenIndex, lines, indexedFile, text, diagnostics);
     } catch (err) {
+      if (err instanceof IndexBudgetExceeded) throw err;
       diagnostics.skippedFiles.push({
         path: absolutePath,
         reason: err instanceof Error ? err.message : String(err),
