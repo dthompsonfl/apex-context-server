@@ -116,6 +116,12 @@ test("real stdio MCP discovers and invokes all 15 public tools with live source,
     assert.deepEqual(JSON.parse(contents(secret)).matches, [], "secret material must not be searchable");
     const astSecret = await client.callTool({ name: "read_component_context", arguments: { filepath: path.join(root, "apps/web/src/components/canary.ts"), nodeName: "example" } });
     assert.doesNotMatch(contents(astSecret), /SYNTHETIC_PRIVATE_KEY_NOT_VALID_ONLY_FOR_TESTING/);
+    const badType = await client.callTool({ name: "find_symbol", arguments: { query: 123 } });
+    assert.equal(badType.isError, true, "wrong-type arguments return tool error");
+    const missing = await client.callTool({ name: "search_code", arguments: {} });
+    assert.equal(missing.isError, true, "missing required query returns tool error");
+    const tooLong = await client.callTool({ name: "search_code", arguments: { query: "x".repeat(300) } });
+    assert.equal(tooLong.isError, true, "query budget must be enforced");
     const regex = await client.callTool({ name: "search_code", arguments: { query: "(a+)+$", regex: true } });
     assert.equal(regex.isError, true);
     const cache = await client.callTool({ name: "index_workspace", arguments: {} });
