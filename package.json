@@ -11,7 +11,8 @@
     "dist",
     "opencode",
     "scripts",
-    "README.md"
+    "README.md",
+    "docs"
   ],
   "scripts": {
     "build": "tsc",
@@ -19,7 +20,14 @@
     "start": "node dist/index.js",
     "setup:opencode": "node scripts/setup-opencode.mjs",
     "uninstall:opencode": "node scripts/uninstall-opencode.mjs",
-    "test": "node --test dist/*.test.js"
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "node --test dist/indexer.test.js",
+    "test:integration": "node --test dist/tests/integration.*.test.js",
+    "test:security": "node --test dist/tests/security.*.test.js",
+    "test:installer": "node --test dist/tests/installer.*.test.js",
+    "smoke:mcp": "node scripts/smoke-mcp.mjs",
+    "demo": "node scripts/demo.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

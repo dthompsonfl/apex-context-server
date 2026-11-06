@@ -10,6 +10,8 @@ import {
   type WorkspaceIndex,
 } from "./indexer.js";
 import { getWorkspaceTopology } from "./topology.js";
+import { normalizePath, resolveRoot } from "./paths.js";
+import { redactText } from "./redact.js";
 
 export interface AgentBootContextOptions {
   root?: string;
@@ -45,6 +47,7 @@ export async function getAgentBootContext(
     `Tokens         : ${index.tokenCount}`,
     `Packages       : ${Object.keys(topology).length}`,
     `Diagnostics    : ${diagnostics.skippedFiles.length} skipped, ${diagnostics.parseFailures.length} parse failure(s), ${diagnostics.secretRedactions.length} redaction(s)`,
+    `Refresh        : ${diagnostics.lastRefreshKind ?? "unknown"}${diagnostics.lastRefreshAt ? ` @ ${diagnostics.lastRefreshAt}` : ""}`,
     "",
     "Entry Files",
     "-----------",
@@ -82,18 +85,23 @@ export async function readContextBundle(
     throw new Error("Could not resolve a bundle target from filepath, nodeName, or query.");
   }
 
-  const relatedTests = findRelatedFiles(index, target, ["test", "spec"]);
-  const relatedDocs = findRelatedFiles(index, target, ["md", "mdx"]);
+  const maxRelated = Math.max(1, Math.min(options.maxRelated ?? 12, 50));
+  const relatedTests = findRelatedFiles(index, target, ["test", "spec"]).slice(0, maxRelated);
+  const relatedDocs = findRelatedFiles(index, target, ["md", "mdx"]).slice(0, maxRelated);
   const packageMeta = await readNearestPackageJson(index.root, target.path);
   const nearbyLines = getNearbyLines(index, target, options.nodeName);
   const componentContext =
     options.nodeName && target.path
-      ? await extractComponentContext(path.join(index.root, target.path), options.nodeName).catch(
+      ? await extractComponentContext(
+          path.join(index.root, target.path),
+          options.nodeName,
+          index.root,
+        ).catch(
           (err) => `Component context unavailable: ${err instanceof Error ? err.message : String(err)}`,
         )
       : "";
 
-  return [
+  const body = [
     "Apex Context Bundle",
     "===================",
     "",
@@ -103,6 +111,7 @@ export async function readContextBundle(
     `Modified      : ${target.modifiedTime}`,
     `Package       : ${packageMeta?.name ?? "(unknown)"}`,
     `Route kind    : ${target.routeKind ?? "(none)"}`,
+    `Related limit : ${maxRelated}`,
     "",
     "Exports",
     "-------",
@@ -135,6 +144,8 @@ export async function readContextBundle(
       : "(not available)",
     componentContext ? `\n${componentContext}` : "",
   ].join("\n");
+
+  return redactText(body, { path: target.path });
 }
 
 async function resolveBundleTarget(
@@ -142,7 +153,13 @@ async function resolveBundleTarget(
   options: ContextBundleOptions,
 ): Promise<IndexedFile | null> {
   if (options.filepath) {
-    const normalizedPath = normalizePath(path.relative(index.root, path.resolve(index.root, options.filepath)));
+    const abs = path.isAbsolute(options.filepath)
+      ? path.resolve(options.filepath)
+      : path.resolve(index.root, options.filepath);
+    const normalizedPath = normalizePath(path.relative(index.root, abs));
+    if (normalizedPath.startsWith("..")) {
+      throw new Error(`filepath is outside the authorized workspace root: ${options.filepath}`);
+    }
     return (
       index.files.find((file) => file.path === normalizedPath || file.path === options.filepath) ??
       null
@@ -177,8 +194,7 @@ function findRelatedFiles(
     .filter((file) => {
       const lower = file.path.toLowerCase();
       return markers.some((marker) => lower.includes(marker)) && lower.includes(base);
-    })
-    .slice(0, 12);
+    });
 }
 
 function getNearbyLines(
@@ -209,13 +225,11 @@ async function readNearestPackageJson(
         version?: string;
       };
     } catch {
-      dir = path.dirname(dir);
+      const next = path.dirname(dir);
+      if (next === dir) break;
+      dir = next;
     }
   }
 
   return null;
-}
-
-function normalizePath(value: string): string {
-  return value.split(path.sep).join("/");
 }
