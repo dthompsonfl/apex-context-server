@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -182,28 +182,51 @@ function isFileLifecycleEvent(type) {
   ].includes(type);
 }
 
-async function readState() {
-  try {
-    return JSON.parse(await readFile(STATE_PATH, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
 async function updateWorkspaceState(mutator) {
-  const state = await readState();
-  state.workspaces ??= {};
-  const workspace = state.workspaces[ROOT_HASH] ?? { root: ROOT };
-  workspace.root = ROOT;
-  mutator(workspace);
-  workspace.updatedAt = new Date().toISOString();
-  state.workspaces[ROOT_HASH] = workspace;
-  state.memoryStale = Object.values(state.workspaces).some(
-    (entry) => entry.memoryStale === true,
-  );
-
-  await mkdir(CONFIG_DIR, { recursive: true });
-  await writeFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  const lock = STATE_PATH + ".lock";
+  await mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  let handle;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    try {
+      handle = await open(lock, "wx", 0o600);
+      break;
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+      try {
+        if (Date.now() - (await stat(lock)).mtimeMs > 10000) await rm(lock, { force: true });
+      } catch (inner) {
+        if (inner.code !== "ENOENT") throw inner;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+  }
+  if (!handle) throw new Error("Apex usage state lock timed out");
+  const temporary = STATE_PATH + "." + process.pid + "." + crypto.randomBytes(8).toString("hex") + ".tmp";
+  try {
+    let state;
+    try {
+      state = JSON.parse(await readFile(STATE_PATH, "utf8"));
+    } catch (err) {
+      if (err.code !== "ENOENT") throw new Error("Invalid Apex state JSON; refusing to erase it");
+      state = {};
+    }
+    state.workspaces ??= {};
+    const workspace = state.workspaces[ROOT_HASH] ?? { root: ROOT };
+    workspace.root = ROOT;
+    mutator(workspace);
+    workspace.updatedAt = new Date().toISOString();
+    state.workspaces[ROOT_HASH] = workspace;
+    state.memoryStale = Object.values(state.workspaces).some(entry => entry.memoryStale === true);
+    await writeFile(temporary, JSON.stringify(state, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+    await rename(temporary, STATE_PATH);
+  } catch (err) {
+    // Telemetry failure must not sabotage an ordinary OpenCode tool invocation.
+    console.error("Apex guard telemetry unavailable: " + err.message);
+  } finally {
+    await rm(temporary, { force: true });
+    await handle.close();
+    await rm(lock, { force: true });
+  }
 }
 
 function hashRoot(root) {
