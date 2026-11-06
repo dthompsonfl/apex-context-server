@@ -44,7 +44,7 @@ try {
     CI: "true", NO_COLOR: "1", TERM: "dumb",
   };
   const version = (await run(cli, ["--version"], env)).stdout.trim();
-  assert.match(version, client === "v1" ? /^1\./ : /^2\./, "CLI version must match selected adapter");
+  assert.match(version, client === "v1" ? /(?:^|\s)v?1\./ : /(?:^|\s)v?2\./, "CLI version must match selected adapter");
   await run(process.execPath, [path.join(repo, "scripts/setup-opencode.mjs"),
     "--scope", "project", "--client", client], env, 180000);
   const configPath = path.join(project, "opencode.json");
