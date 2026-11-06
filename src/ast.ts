@@ -283,7 +283,13 @@ function getImportTargetFile(
     .find((decl) => decl.getModuleSpecifierValue() === specifier)
     ?.getModuleSpecifierSourceFile();
   if (importSourceFile) {
-    return importSourceFile;
+    try {
+      authorizeFile(resolveRoot(), importSourceFile.getFilePath());
+      return importSourceFile;
+    } catch {
+      // External or excluded declarations are not part of authorized context.
+      return undefined;
+    }
   }
 
   const resolvedPath = resolveModuleToFile(sourceFile, specifier);
