@@ -114,6 +114,12 @@ export async function applyTransaction(directory, changes, allowedPaths) {
       const staged = path.join(journal, "stage", String(id));
       if (change.kind === "file") await makePrivateFile(staged, change.content);
       else if (change.kind === "directory") await cp(change.source, staged, { recursive: true, dereference: true });
+      else if (change.kind === "runtime") {
+        await mkdir(staged, { mode: 0o700 });
+        for (const name of ["dist", "node_modules", "package.json"]) {
+          await cp(path.join(change.source, name), path.join(staged, name), { recursive: true, dereference: true });
+        }
+      }
       else if (change.kind !== "delete") throw new Error("Invalid Apex transaction operation");
       const after = change.kind === "delete" ? null : await managedHash(staged);
       entries.push({ id, target, before, after });
