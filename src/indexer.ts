@@ -1748,7 +1748,18 @@ async function discoverCurrentFiles(root: string): Promise<string[]> {
     absolute: true, cwd: root, ignore: IGNORE_PATTERNS,
     onlyFiles: true, unique: true, followSymbolicLinks: false,
   });
-  return found.filter(file => !isSensitivePath(path.relative(root, file)) && SEARCHABLE_EXTENSIONS.has(path.extname(file)));
+  const allowed: string[] = [];
+  for (const file of found) {
+    if (isSensitivePath(path.relative(root, file)) || !SEARCHABLE_EXTENSIONS.has(path.extname(file))) continue;
+    try {
+      const metadata = await stat(file);
+      if (metadata.isFile() && metadata.size <= MAX_FILE_BYTES) {
+        authorizeFile(root, file);
+        allowed.push(file);
+      }
+    } catch { /* inaccessible paths cannot be indexed */ }
+  }
+  return allowed;
 }
 
 async function isWorkspaceMemoryMarkedStale(root: string): Promise<boolean> {
