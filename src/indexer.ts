@@ -3,6 +3,7 @@ import { access, mkdir, readFile, stat, writeFile, rename, rm } from "node:fs/pr
 import os from "node:os";
 import path from "node:path";
 import fg from "fast-glob";
+import { updateUsageState } from "./usage-state.js";
 import { authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
 import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
@@ -1771,62 +1772,39 @@ async function isWorkspaceMemoryMarkedStale(root: string): Promise<boolean> {
 }
 
 async function clearWorkspaceMemoryStale(root: string): Promise<void> {
-  const statePath = path.join(getOpenCodeConfigDir(), "apex-context-usage.json");
-  let state: ApexUsageState = {};
-  try {
-    state = JSON.parse(await readFile(statePath, "utf8")) as ApexUsageState;
-  } catch {
-    state = {};
-  }
-
-  state.workspaces ??= {};
-  const rootHash = hashRoot(root);
-  state.workspaces[rootHash] ??= { root };
-  state.workspaces[rootHash].root = root;
-  state.workspaces[rootHash].memoryStale = false;
-  state.workspaces[rootHash].changedFiles = [];
-  state.workspaces[rootHash].deletedFiles = [];
-  state.workspaces[rootHash].memoryRefreshedAt = new Date().toISOString();
-  state.memoryStale = Object.values(state.workspaces).some(
-    (workspace) => workspace.memoryStale === true,
-  );
-  await mkdir(path.dirname(statePath), { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  const file = path.join(getOpenCodeConfigDir(), "apex-context-usage.json");
+  await updateUsageState<ApexUsageState>(file, state => {
+    state.workspaces ??= {};
+    const rootHash = hashRoot(root);
+    const workspace = state.workspaces[rootHash] ?? { root };
+    workspace.root = root;
+    workspace.memoryStale = false;
+    workspace.changedFiles = [];
+    workspace.deletedFiles = [];
+    workspace.memoryRefreshedAt = new Date().toISOString();
+    state.workspaces[rootHash] = workspace;
+    state.memoryStale = Object.values(state.workspaces).some(item => item.memoryStale === true);
+  });
 }
 
 async function markWorkspaceMemoryStale(
   root: string,
   details: { event: string; changedFiles?: string[]; deletedFiles?: string[] },
 ): Promise<void> {
-  const statePath = path.join(getOpenCodeConfigDir(), "apex-context-usage.json");
-  let state: ApexUsageState = {};
-
-  try {
-    state = JSON.parse(await readFile(statePath, "utf8")) as ApexUsageState;
-  } catch {
-    state = {};
-  }
-
-  state.workspaces ??= {};
-  const rootHash = hashRoot(root);
-  const workspace = state.workspaces[rootHash] ?? { root };
-  workspace.root = root;
-  workspace.memoryStale = true;
-  workspace.changedFiles = uniqueStrings([
-    ...(workspace.changedFiles ?? []),
-    ...(details.changedFiles ?? []),
-  ]);
-  workspace.deletedFiles = uniqueStrings([
-    ...(workspace.deletedFiles ?? []),
-    ...(details.deletedFiles ?? []),
-  ]);
-  workspace.lastFileEvent = details.event;
-  workspace.updatedAt = new Date().toISOString();
-  state.workspaces[rootHash] = workspace;
-  state.memoryStale = true;
-
-  await mkdir(path.dirname(statePath), { recursive: true });
-  await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  const file = path.join(getOpenCodeConfigDir(), "apex-context-usage.json");
+  await updateUsageState<ApexUsageState>(file, state => {
+    state.workspaces ??= {};
+    const rootHash = hashRoot(root);
+    const workspace = state.workspaces[rootHash] ?? { root };
+    workspace.root = root;
+    workspace.memoryStale = true;
+    workspace.changedFiles = uniqueStrings([...(workspace.changedFiles ?? []), ...(details.changedFiles ?? [])]);
+    workspace.deletedFiles = uniqueStrings([...(workspace.deletedFiles ?? []), ...(details.deletedFiles ?? [])]);
+    workspace.lastFileEvent = details.event;
+    workspace.updatedAt = new Date().toISOString();
+    state.workspaces[rootHash] = workspace;
+    state.memoryStale = true;
+  });
 }
 
 interface ApexUsageState {
