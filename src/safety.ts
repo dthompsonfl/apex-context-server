@@ -1,4 +1,5 @@
-import { realpathSync, statSync } from "node:fs";
+import { constants, closeSync, fstatSync, openSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { open } from "node:fs/promises";
 import path from "node:path";
 
 export const MAX_FILE_BYTES = 1024 * 1024;
@@ -77,6 +78,34 @@ export function authorizeFile(root: string, filepath: string): string {
     throw new Error("Source file exceeds the 1 MiB indexing/read limit.");
   }
   return canonical;
+}
+
+/** Follow canonical workspace paths, then read from an already-open regular-file descriptor. */
+export async function readAuthorizedSource(root: string, filepath: string): Promise<{ path: string; text: string }> {
+  const filename = authorizeFile(root, filepath);
+  const handle = await open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error("Source is not a permitted regular file");
+    const text = await handle.readFile("utf8");
+    if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) throw new Error("Source grew beyond the allowed file limit");
+    // Second canonical check catches common rename/symlink races.
+    authorizeFile(root, filename);
+    return { path: filename, text };
+  } finally { await handle.close(); }
+}
+
+export function readAuthorizedSourceSync(root: string, filepath: string): { path: string; text: string } {
+  const filename = authorizeFile(root, filepath);
+  const fd = openSync(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > MAX_FILE_BYTES) throw new Error("Source is not a permitted regular file");
+    const text = readFileSync(fd, "utf8");
+    if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) throw new Error("Source grew beyond the allowed file limit");
+    authorizeFile(root, filename);
+    return { path: filename, text };
+  } finally { closeSync(fd); }
 }
 
 export interface SecretHit { pattern: string; line: number }
