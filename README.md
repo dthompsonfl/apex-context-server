@@ -20,10 +20,10 @@ The demo launches a **real SDK MCP client and server over stdio**, lists 15 tool
 
 - 15 stable MCP tools for discovery, memory, health, watcher, refresh, search, symbols, topology and context
 - JS/TS AST declarations, static/dynamic imports, CommonJS require and imports/importers
-- Common monorepo aliases, JSONC/extended tsconfig, route recognition and workspace packages
+- Common monorepo aliases, JSONC and locally authorized tsconfig inheritance, route recognition and workspace packages
 - Local JSON cache with file-content reconciliation, single-flight builds and atomic persistence
 - Workspace-root containment, symlink defense, secret exclusions/redaction and resource limits
-- Opt-in project-first OpenCode installer with dry-run, ownership manifest, JSONC-aware edits and safe uninstall
+- Opt-in project-first OpenCode V1 installer with dry-run, persistent rollback journal, ownership manifest, JSONC-aware edits and safe uninstall
 
 **Recommended flow:** `locate_code` → `read_context_bundle` → targeted file verification. For a known exported declaration use `read_component_context`.
 
@@ -41,7 +41,7 @@ The official MCP Inspector CLI can independently inspect tool metadata after bui
 npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
 ```
 
-The Inspector binary is optional, not downloaded by CI. OpenCode versions differ. A real OpenCode client smoke is separate from the SDK test and is **not claimed verified** without its own evidence.
+The Inspector binary is optional. **OpenCode V1.19.5 is the only supported and real-client-tested OpenCode adapter.** Its CI job installs the pinned real CLI, connects to Apex and invokes `locate_code` and `read_context_bundle` through the agent using a deterministic local model stub. OpenCode V2 is deliberately unsupported because released V2 versions can connect to MCP without registering its tools for agents.
 
 ## Opt-in OpenCode setup
 
@@ -51,6 +51,8 @@ Project scope is the default and targets `APEX_CONTEXT_PROJECT_DIR` or the curre
 npm run setup:opencode -- --scope project --dry-run
 npm run setup:opencode -- --scope project
 npm run uninstall:opencode -- --scope project
+# For an interrupted transaction:
+npm run setup:opencode -- --scope project --recover
 ```
 
 Use `APEX_CONTEXT_PROJECT_DIR=/path/to/another/project` to target another project. `--scope user` explicitly operates in your OpenCode user config. Review its dry-run first. The installed raw-search guard **warns by default**; set `APEX_CONTEXT_GUARD_MODE=strict` to make it block heuristic broad searches. This is workflow policy, not filesystem security.
@@ -70,11 +72,12 @@ npm run demo
 npm run bench
 npm audit --audit-level=high
 npm pack --dry-run
+npm run smoke:package # isolated tarball installation and executable test
 ```
 
 CI executes the verification matrix on Node 20 and 22. Only the CI run matching the current commit proves that commit's status.
 
-Resource budgets: 1 MiB indexed file, 30,000 files, 2,048 characters per indexed line, 256-character query, 60,000-character response. Complex regex forms are restricted. Content freshness checks intentionally prioritize correctness over large-repo speed. Redaction is best-effort and **not a guarantee that all secrets are detected**.
+Resource budgets: 1 MiB per file, 30,000 discovered files, 64 MiB total source, 250,000 indexed lines, 2,048 characters per line, 256-character query and 60,000-character response. Complex regex forms are restricted. Content freshness checks intentionally prioritize correctness over large-repo speed. Redaction is best-effort and **not a guarantee that all secrets are detected**.
 
 ## Further reading
 

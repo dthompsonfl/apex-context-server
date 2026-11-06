@@ -23,7 +23,7 @@ npm run demo
 
 Expected final message: `DEMO PASSED`. The actual returned paths/counts depend on the fixture and revision. This is not simulated output.
 
-Additional checks: `npm run smoke:mcp`, `npm run test:security`, `npm run test:installer` and `npm run bench`.
+Additional checks: `npm run smoke:mcp`, `npm run test:security`, `npm run test:installer`, `npm run bench` and `npm run smoke:package`, which installs the package tarball in an isolated prefix and invokes its installed executable via MCP.
 
 For manual Inspector use after independently installing an appropriate CLI release:
 
@@ -31,6 +31,9 @@ For manual Inspector use after independently installing an appropriate CLI relea
 npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
 ```
 
-The Inspector is not required by CI. Real OpenCode version-specific tool invocation remains separate from SDK interoperability.
+The Inspector is not required by CI. The supported OpenCode V1.19.5 client is separately installed into a clean runner prefix. CI connects with `opencode mcp list` and uses real agent/tool calls to retrieve Apex code location and context bundle. A deterministic local model stub requests the calls but does not fabricate MCP results. V2 remains unsupported due to client-side MCP catalog defects.
 
 Troubleshooting: missing dist means run `npm run build`; missing modules means `npm ci`; corrupt cache means stop the process and remove only the matching cache JSON; installer ownership conflicts require reviewing the manifest rather than force-removing user files.
+
+
+Interrupted setup or uninstall: invoke the original script with `--scope project --recover`. The persisted transaction journal verifies ownership hashes and restores the previous state. Do not manually delete user files.
