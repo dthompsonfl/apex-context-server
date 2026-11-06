@@ -11,6 +11,8 @@
     "dist",
     "opencode",
     "scripts",
+    "examples",
+    "docs",
     "README.md"
   ],
   "scripts": {
@@ -19,7 +21,14 @@
     "start": "node dist/index.js",
     "setup:opencode": "node scripts/setup-opencode.mjs",
     "uninstall:opencode": "node scripts/uninstall-opencode.mjs",
-    "test": "node --test dist/*.test.js"
+    "test": "node --test dist/*.test.js",
+    "test:unit": "node --test dist/indexer.test.js",
+    "test:integration": "node --test dist/mcp.integration.test.js",
+    "test:security": "node --test dist/security.test.js",
+    "test:installer": "node --test dist/installer.test.js",
+    "smoke:mcp": "node --test dist/mcp.integration.test.js",
+    "demo": "node scripts/demo.mjs",
+    "bench": "node scripts/bench.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
@@ -32,6 +41,6 @@
     "typescript": "^5.7.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   }
 }

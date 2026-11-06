@@ -12,8 +12,9 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
         node: ["20", "22"]
     steps:
@@ -21,15 +22,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      # Use the checked-in lockfile and prevent package install hooks.
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-fund
       - name: Typecheck
         run: npm run typecheck
       - name: Build
         run: npm run build
-      - name: Run fixture tests
+      - name: All tests
         run: npm test
+      - name: MCP protocol integration
+        run: npm run test:integration
+      - name: Source safety tests
+        run: npm run test:security
+      - name: Installer rollback tests
+        run: npm run test:installer
+      - name: Real-client smoke
+        run: npm run smoke:mcp
+      - name: Isolated recruiter demo
+        run: npm run demo
+      - name: Deterministic benchmarks
+        run: npm run bench
+      - name: Package contents
+        run: npm pack --dry-run
   dependency-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -40,5 +54,5 @@ jobs:
           node-version: "22"
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --no-fund
-      - name: Audit installed dependency graph
+      - name: Audit dependency graph
         run: npm audit --audit-level=high
