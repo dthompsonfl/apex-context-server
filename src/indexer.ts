@@ -1200,22 +1200,18 @@ async function readTsConfigAliases(root: string, files: string[]): Promise<TsCon
     }
 
     try {
-      const config = JSON.parse(await readFile(absolutePath, "utf8")) as {
-        compilerOptions?: {
-          baseUrl?: unknown;
-          paths?: unknown;
-        };
-      };
-      const compilerOptions = config.compilerOptions;
-      if (!compilerOptions || typeof compilerOptions.paths !== "object" || !compilerOptions.paths) {
-        continue;
-      }
+      // ts-morph delegates tsconfig JSONC and inherited-extends parsing to TypeScript.
+      const configured = new Project({ tsConfigFilePath: absolutePath, skipAddingFilesFromTsConfig: true });
+      const compilerOptions = configured.getCompilerOptions();
+      if (!compilerOptions.paths) continue;
 
       const configDir = toRelativePath(root, path.dirname(absolutePath));
-      const baseUrl =
-        typeof compilerOptions.baseUrl === "string"
-          ? normalizePath(path.join(configDir, compilerOptions.baseUrl))
-          : configDir;
+      const configuredBase = compilerOptions.baseUrl;
+      const baseUrl = typeof configuredBase === "string"
+        ? (path.isAbsolute(configuredBase)
+          ? toRelativePath(root, configuredBase)
+          : normalizePath(path.join(configDir, configuredBase)))
+        : configDir;
 
       for (const [key, value] of Object.entries(compilerOptions.paths)) {
         if (!Array.isArray(value)) {
