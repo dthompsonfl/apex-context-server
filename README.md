@@ -1,84 +1,61 @@
 # Apex Context Server
 
-Apex Context Server is a local Model Context Protocol (MCP) server for OpenCode. It gives coding agents AST-aware tools for searching, indexing, mapping, and reading code in large Next.js and Turborepo workspaces.
+Apex Context Server is a **local-first Model Context Protocol (MCP)** server (Node.js/TypeScript, stdio) that builds a persistent, AST-aware index of a workspace so MCP clients can locate symbols/routes/files, search source, inspect workspace topology, and retrieve edit-ready context without broad ad hoc shell scanning.
 
-**Verification:** [Build, typecheck, fixture tests, and dependency audit passed in GitHub Actions](https://github.com/dthompsonfl/apex-context-server/actions/runs/41545493391) on Node.js 20 and 22 (November 2, 2026). The repository includes a committed `package-lock.json`; its CI now uses `npm ci`. Integration performance and productivity gains are not independently benchmarked.
+## Verified capabilities (evidence-based)
+- **15 MCP tools** exposed over stdio (discovery, indexing, search/symbol/locate, AST component context, topology, diagnostics, watcher/refresh, boot/context bundles, dashboard/health). Verified by a real MCP SDK client in automated tests and `smoke:mcp`/`demo`.
+- **Freshness after external changes**: index freshness validation detects external edits/manifest changes; demo/test confirm updated results without restarting the server.
+- **Workspace boundary & sensitive-data controls**: direct file reads are constrained to the authorized root (path containment/realpath checks in AST context path), sensitive files (e.g., `.env`) are excluded from indexing, and best-effort redaction is applied to indexed/output text. *Limitation: heuristic redaction is not perfect.*
+- **Safe installer workflows**: setup/uninstall support isolated config dirs, `--dry-run`, preserve unrelated OpenCode config, and use managed-manifest removal (verified in isolated temp configs). *Live OpenCode client compatibility is not verified in this environment.*
+- **Local reproducible checks**: typecheck/build, tests (unit/integration/security/installer), `smoke:mcp`, `demo`, `bench`.
 
-To validate the source locally, run `npm install`, `npm run typecheck`, `npm run build`, then `npm test`. The `setup:opencode` script edits user-level OpenCode settings; run it only after reviewing the effect.
-
-## Install
-
-From the repository root:
-
+## Quickstart
 ```bash
-npm install
+npm ci --ignore-scripts --no-fund
 npm run build
-npm run setup:opencode
+npm run smoke:mcp   # real MCP client + compiled stdio server
+npm run demo       # reproducible end-to-end demo (isolated temp workspace)
 ```
 
-Those commands install dependencies, build the TypeScript server, copy the runnable server into `~/.config/opencode/apex-context-server`, and update `~/.config/opencode/opencode.json` so OpenCode starts it as the `apex-context` MCP server.
-
-The installer also writes `~/.config/opencode/apex-context-instructions.md` and adds it to OpenCode's global instructions. This makes Apex the preferred system for code search and context retrieval while leaving existing OpenCode settings intact.
-
-## TUI System
-
-Apex installs three OpenCode TUI surfaces:
-
-- Global slash commands:
-  - `/apex`: primes the visual Apex dashboard and then proceeds with the task.
-  - `/apex-boot`: loads the compact agent boot context.
-  - `/apex-find`: locates code through Apex memory, symbol lookup, and exact code search instead of broad shell commands.
-  - `/apex-status`: shows index health and raw-search guard telemetry.
-  - `/apex-where`: asks Apex memory where something lives.
-  - `/apex-refresh`: rebuilds persistent Apex memory after edits or branch changes.
-- A guard plugin at `~/.config/opencode/plugins/apex-context-guard.js` that blocks broad raw CLI discovery commands such as `rg`, recursive `grep`, `find .`, `fd`, `tree`, and `ls -R`.
-- A persistent telemetry file at `~/.config/opencode/apex-context-usage.json`, surfaced by the dashboard, so the TUI can show whether Apex tools are being used and whether broad shell search was blocked.
-
-If raw shell search is truly necessary, prefix the command with `APEX_CONTEXT_ALLOW_RAW_SEARCH=1`. To run the guard in warning-only mode, start OpenCode with `APEX_CONTEXT_GUARD_MODE=warn`.
-
-## Workspace Memory
-
-Apex builds a durable workspace memory file under `~/.config/opencode/apex-context-index/`. The memory contains:
-
-- file paths, basenames, languages, sizes, imports, and importers
-- exported symbols and top-level local declarations with file, line, column, and declaration kind
-- static imports, re-exports, dynamic imports, and CommonJS `require` edges
-- relative imports, workspace package imports, and common `tsconfig`/Next.js app aliases such as `@/*`
-- per-file size, mtime, and SHA-256 content fingerprints
-- Next.js route, layout, page, loading, error, and route-handler files
-- searchable source lines
-- token maps for instant lookup across symbols, paths, imports, and content
-- diagnostics for skipped files, parse failures, alias misses, large files, and redactions
-
-Once built, future lookups load this memory instead of walking the repository. Agents should call `locate_code` first for any "where is this?" question, then use `read_component_context` once a concrete symbol is identified.
-
-The OpenCode guard plugin marks memory stale when files change. The next Apex lookup automatically rebuilds the persisted memory before answering, then clears the stale flag.
-
-Secret-like values are redacted before source lines are written to memory. `.env`, private keys, and lockfiles are ignored.
-
-## Tools
-
-- `prime_workspace_context`: renders the Apex TUI dashboard with topology, index status, guard telemetry, and the low-token search workflow.
-- `get_agent_boot_context`: returns a compact always-fresh repo brief for agents.
-- `get_context_health`: shows a compact dashboard for index and guard status.
-- `get_workspace_memory`: returns the persistent memory map summary and cache location.
-- `refresh_workspace_memory`: force-rebuilds and persists the workspace memory.
-- `watch_workspace_memory`: starts or reports the live watcher.
-- `refresh_changed_files`: refreshes memory after changed/deleted/added files are detected.
-- `get_index_diagnostics`: reports skipped files, parse failures, redactions, alias misses, and watcher status.
-- `locate_code`: instantly locates likely files, symbols, routes, imports, and source lines from memory.
-- `read_context_bundle`: returns edit-ready context for a file, symbol, route, or query.
-- `get_workspace_topology`: scans `apps/*` and `packages/*` package manifests and returns a workspace dependency graph.
-- `index_workspace`: loads or builds the persistent AST-backed workspace memory.
-- `search_code`: searches memory-indexed source lines with plain text or regular expressions.
-- `find_symbol`: finds exported and top-level local symbols discovered by the indexer.
-- `read_component_context`: returns an exported symbol and the local or imported type definitions it depends on.
-
-## Manual Start
-
+Manual server start (normally launched by an MCP client):
 ```bash
-npm run build
 npm start
 ```
 
-The MCP server communicates over stdio and is normally launched by OpenCode.
+## OpenCode setup (optional; review before running)
+Targets the OpenCode config directory (`APEX_CONTEXT_CONFIG_DIR` / `OPENCODE_CONFIG_DIR`, default `~/.config/opencode`).
+```bash
+npm run setup:opencode -- --dry-run
+npm run setup:opencode
+npm run uninstall:opencode
+```
+The guard plugin defaults to **warn** mode for broad raw searches; set `APEX_CONTEXT_GUARD_MODE=strict` to block. Override a specific shell command only when necessary with `APEX_CONTEXT_ALLOW_RAW_SEARCH=1`.
+
+## MCP tools (15)
+`get_agent_boot_context`, `read_context_bundle`, `watch_workspace_memory`, `refresh_changed_files`, `get_index_diagnostics`, `prime_workspace_context`, `get_context_health`, `get_workspace_topology`, `get_workspace_memory`, `refresh_workspace_memory`, `locate_code`, `index_workspace`, `search_code`, `find_symbol`, `read_component_context`.
+
+## Testing & verification
+```bash
+npm run typecheck
+npm run build
+npm test                  # all compiled tests
+npm run test:integration  # real MCP stdio + freshness
+npm run test:security
+npm run test:installer
+npm run smoke:mcp
+npm run demo
+npm run bench
+npm audit --audit-level=high
+npm pack --dry-run
+```
+See `docs/VERIFICATION.md`, `docs/DEMO.md`, `docs/SECURITY.md`, `docs/ARCHITECTURE.md`, `docs/BENCHMARKS.md`.
+
+## Limitations
+- Secret detection is **best-effort** (pattern-based) and cannot guarantee complete coverage.
+- TypeScript/alias/import resolution and AST dependency extraction are practical but not full semantic compiler guarantees for every configuration.
+- Live OpenCode client integration was not executed in this environment; installer behavior is verified only in isolated configs.
+- `npm audit --audit-level=high` currently reports **3 moderate** transitive vulnerabilities in the `ts-morph` dependency chain (no high/critical observed); fixing requires a breaking upstream change not applied here.
+- Micro-benchmarks are synthetic and **not** productivity claims.
+
+## License
+No open-source license file is included in this repository snapshot; treat usage/redistribution as unspecified until an owner adds a license.
