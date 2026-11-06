@@ -23,9 +23,13 @@ const global = path.join(temp, "global");
 let model;
 async function run(command, args, env, timeout = 90000) {
   try {
-    return await exec(command, args, {
+    const pending = exec(command, args, {
       cwd: project, env, timeout, maxBuffer: 5_000_000,
     });
+    // OpenCode headless run reads stdin to EOF even when a prompt argument exists.
+    // An inherited open pipe waits forever at init. Explicitly end stdin.
+    pending.child?.stdin?.end();
+    return await pending;
   } catch (error) {
     const message = "OpenCode CLI smoke failed: " + path.basename(command) + " " + args.join(" ") + "\n"
       + String(error.stderr ?? "").slice(-1800) + "\n" + String(error.stdout ?? "").slice(-1800);
