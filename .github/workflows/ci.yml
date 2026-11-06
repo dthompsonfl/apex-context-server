@@ -46,6 +46,8 @@ jobs:
         run: npm run bench
       - name: Package contents
         run: npm pack --dry-run
+      - name: Installed tarball binary smoke
+        run: npm run smoke:package
   dependency-audit:
     runs-on: ubuntu-latest
     timeout-minutes: 10
