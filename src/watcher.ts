@@ -222,7 +222,7 @@ async function primaryWatcher(root: string, changed: ChangeHandler, failed: Erro
         resolve();
       });
       watcher.on("error", error => {
-        if (settled) { failed(error); return; }
+        if (settled) { failed(error instanceof Error ? error : new Error("Unknown watcher backend error")); return; }
         settled = true;
         clearTimeout(timeout);
         reject(error);
