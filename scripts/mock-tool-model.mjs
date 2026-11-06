@@ -9,7 +9,7 @@ import path from "node:path";
  * Acceptance requires both actual MCP tool results to flow back through
  * the OpenCode agent. Missing tools after bounded probes are a hard failure.
  */
-export async function createMockToolModel({ workspace } = {}) {
+export async function createMockToolModel({ workspace, client = "v1" } = {}) {
   let step = 0;
   let phase = "locate";
   let probes = 0;
@@ -41,40 +41,68 @@ export async function createMockToolModel({ workspace } = {}) {
       let selected;
       let functionArgs;
       const contains = needle => messages.includes(needle);
-      if (phase === "locate") {
-        selected = advertised.find(name => name.includes("apex") && name.includes("locate_code"));
-        if (selected) {
-          functionArgs = { query: "Button" };
-          phase = "check-location";
-        }
-      }
-      if (phase === "check-location" && !selected) {
-        if (!contains("Button.tsx")) throw new Error("Real locate_code result never returned to OpenCode model");
-        verifiedLocate = true;
-        selected = advertised.find(name => name.includes("apex") && name.includes("read_context_bundle"));
-        if (selected) {
-          functionArgs = { filepath: "apps/web/src/components/Button.tsx", nodeName: "Button" };
-          phase = "check-bundle";
-        }
-      }
-      if (phase === "check-bundle" && !selected) {
-        if (!contains("ButtonProps") || !contains("Apex Context Bundle")) {
-          throw new Error("Real read_context_bundle result was not returned to OpenCode");
-        }
-        verifiedBundle = true;
-        phase = "done";
-      }
-      if (!selected && phase !== "done") {
-        if (!advertised.length) {
-          // Some OpenCode versions issue a discovery/metadata request before
-          // building the session tool catalog. Do not mutate test phase.
-        } else if (probes < 3 && workspace && advertised.includes("read")) {
+      if (client === "v2") {
+        const code = [
+          'const located = await tools["apex-context"].locate_code({ query: "Button" });',
+          'const bundle = await tools["apex-context"].read_context_bundle({ filepath: "apps/web/src/components/Button.tsx", nodeName: "Button" });',
+          'return { located, bundle };',
+        ].join("\n");
+        if (phase === "locate" && advertised.includes("execute")) {
+          selected = "execute";
+          functionArgs = { code };
+          phase = "check-v2";
           probes++;
-          selected = "read";
-          functionArgs = { filePath: path.join(workspace, "apps/web/src/components/Button.tsx") };
-        } else {
-          throw new Error("Apex tools unavailable after " + probes
-            + " real built-in-tool warmups; advertised=" + advertised.join(","));
+        } else if (phase === "check-v2") {
+          if (contains("Apex Context Bundle") && contains("ButtonProps") && contains("Button.tsx")) {
+            verifiedLocate = true;
+            verifiedBundle = true;
+            phase = "done";
+          } else if (probes < 4 && advertised.includes("execute")) {
+            selected = "execute";
+            functionArgs = { code };
+            probes++;
+          } else {
+            throw new Error("Real Apex Code Mode tool results unavailable after " + probes
+              + " executions; advertised=" + advertised.join(","));
+          }
+        } else if (phase !== "done" && advertised.length) {
+          throw new Error("OpenCode did not advertise the V2 execute tool");
+        }
+      } else {
+        if (phase === "locate") {
+          selected = advertised.find(name => name.includes("apex") && name.includes("locate_code"));
+          if (selected) {
+            functionArgs = { query: "Button" };
+            phase = "check-location";
+          }
+        }
+        if (phase === "check-location" && !selected) {
+          if (!contains("Button.tsx")) throw new Error("Real locate_code result never returned to OpenCode model");
+          verifiedLocate = true;
+          selected = advertised.find(name => name.includes("apex") && name.includes("read_context_bundle"));
+          if (selected) {
+            functionArgs = { filepath: "apps/web/src/components/Button.tsx", nodeName: "Button" };
+            phase = "check-bundle";
+          }
+        }
+        if (phase === "check-bundle" && !selected) {
+          if (!contains("ButtonProps") || !contains("Apex Context Bundle")) {
+            throw new Error("Real read_context_bundle result was not returned to OpenCode");
+          }
+          verifiedBundle = true;
+          phase = "done";
+        }
+        if (!selected && phase !== "done") {
+          if (!advertised.length) {
+            // A metadata/title request may have no tools. Do not advance acceptance state.
+          } else if (probes < 3 && workspace && advertised.includes("read")) {
+            probes++;
+            selected = "read";
+            functionArgs = { path: path.join(workspace, "apps/web/src/components/Button.tsx") };
+          } else {
+            throw new Error("Apex tools unavailable after " + probes
+              + " real built-in-tool warmups; advertised=" + advertised.join(","));
+          }
         }
       }
       const id = "chatcmpl-apex-" + step++;
