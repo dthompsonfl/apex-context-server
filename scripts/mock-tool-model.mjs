@@ -1,12 +1,22 @@
 import { createServer } from "node:http";
+import path from "node:path";
 
 /**
- * Deterministic OpenAI-compatible model stub used only by the OpenCode client smoke.
- * An LLM is not involved; the stub requests actual MCP tools and checks returned content.
+ * A deterministic OpenAI-compatible test provider, NOT a mock of MCP.
+ * It performs a built-in read only if OpenCode's known cold-start MCP tool
+ * registration race leaves the first model request without Apex tools.
+ *
+ * Acceptance requires both actual MCP tool results to flow back through
+ * the OpenCode agent. Missing tools after bounded probes are a hard failure.
  */
-export async function createMockToolModel() {
+export async function createMockToolModel({ workspace } = {}) {
   let step = 0;
+  let phase = "locate";
+  let probes = 0;
+  let verifiedLocate = false;
+  let verifiedBundle = false;
   const observations = [];
+
   const server = createServer(async (request, response) => {
     if (request.method === "GET" && request.url?.endsWith("/models")) {
       response.writeHead(200, { "content-type": "application/json" });
@@ -20,73 +30,97 @@ export async function createMockToolModel() {
     try {
       for await (const chunk of request) {
         raw += chunk;
-        if (raw.length > 2_000_000) throw new Error("Oversized mock provider request");
+        if (raw.length > 2_000_000) throw new Error("Oversized synthetic provider request");
       }
       const body = JSON.parse(raw);
-      const advertised = (body.tools ?? []).map(item => item.function?.name ?? item.name).filter(Boolean);
-      observations.push({ step, advertised, messages: body.messages ?? [] });
-      const want = step === 0 ? "locate_code" : step === 1 ? "read_context_bundle" : null;
-      const selected = want
-        ? advertised.find(name => name.includes("apex") && name.includes(want))
-        : undefined;
-      if (want && !selected) {
-        response.writeHead(400, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: { message: "OpenCode did not expose Apex " + want, type: "invalid_request_error" } }));
-        return;
-      }
-      if (step > 0) {
-        const contents = JSON.stringify(body.messages ?? []);
-        if (!contents.includes(step === 1 ? "Button.tsx" : "ButtonProps")) {
-          response.writeHead(400, { "content-type": "application/json" });
-          response.end(JSON.stringify({ error: { message: "Prior Apex tool result absent from OpenCode context", type: "invalid_request_error" } }));
-          return;
+      const advertised = (body.tools ?? [])
+        .map(item => item.function?.name ?? item.name)
+        .filter(Boolean);
+      const messages = JSON.stringify(body.messages ?? []);
+      observations.push({ step, phase, advertised });
+      let selected;
+      let functionArgs;
+      const contains = needle => messages.includes(needle);
+      if (phase === "locate") {
+        selected = advertised.find(name => name.includes("apex") && name.includes("locate_code"));
+        if (selected) {
+          functionArgs = { query: "Button" };
+          phase = "check-location";
         }
       }
-      const id = "chatcmpl-apex-" + step;
+      if (phase === "check-location" && !selected) {
+        if (!contains("Button.tsx")) throw new Error("Real locate_code result never returned to OpenCode model");
+        verifiedLocate = true;
+        selected = advertised.find(name => name.includes("apex") && name.includes("read_context_bundle"));
+        if (selected) {
+          functionArgs = { filepath: "apps/web/src/components/Button.tsx", nodeName: "Button" };
+          phase = "check-bundle";
+        }
+      }
+      if (phase === "check-bundle" && !selected) {
+        if (!contains("ButtonProps") || !contains("Apex Context Bundle")) {
+          throw new Error("Real read_context_bundle result was not returned to OpenCode");
+        }
+        verifiedBundle = true;
+        phase = "done";
+      }
+      if (!selected && phase !== "done") {
+        if (!advertised.length) {
+          // Some OpenCode versions issue a discovery/metadata request before
+          // building the session tool catalog. Do not mutate test phase.
+        } else if (probes < 3 && workspace && advertised.includes("read")) {
+          probes++;
+          selected = "read";
+          functionArgs = { filePath: path.join(workspace, "apps/web/src/components/Button.tsx") };
+        } else {
+          throw new Error("Apex tools unavailable after " + probes
+            + " real built-in-tool warmups; advertised=" + advertised.join(","));
+        }
+      }
+      const id = "chatcmpl-apex-" + step++;
       const callId = "call_apex_" + step;
-      const functionArgs = JSON.stringify(step === 0
-        ? { query: "Button" }
-        : { filepath: "apps/web/src/components/Button.tsx", nodeName: "Button" });
-      const streaming = body.stream !== false;
       const toolCall = selected ? {
-        id: callId, type: "function", function: { name: selected, arguments: functionArgs },
+        id: callId, type: "function", function: {
+          name: selected, arguments: JSON.stringify(functionArgs),
+        },
       } : null;
+      const text = selected ? null : phase === "done"
+        ? "Apex OpenCode end-to-end verification completed."
+        : "Apex tool-discovery check.";
       const full = {
         id, object: "chat.completion", created: 1, model: "fixture",
         choices: [{
-          index: 0, message: {
-            role: "assistant", content: selected ? null : "Apex OpenCode end-to-end verification completed.",
-            ...(toolCall ? { tool_calls: [toolCall] } : {}),
-          },
+          index: 0,
+          message: { role: "assistant", content: text, ...(toolCall ? { tool_calls: [toolCall] } : {}) },
           finish_reason: toolCall ? "tool_calls" : "stop",
         }],
         usage: { prompt_tokens: 20, completion_tokens: 20, total_tokens: 40 },
       };
-      step++;
-      if (!streaming) {
+      if (body.stream === false) {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify(full));
-        return;
+        response.end(JSON.stringify(full)); return;
       }
       response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-      const event = (delta, finish_reason = null) =>
-        response.write("data: " + JSON.stringify({
-          id, object: "chat.completion.chunk", created: 1, model: "fixture",
-          choices: [{ index: 0, delta, finish_reason }],
-        }) + "\n\n");
-      event({ role: "assistant" });
-      if (toolCall) event({
+      const emit = (delta, finish_reason = null) => response.write("data: " + JSON.stringify({
+        id, object: "chat.completion.chunk", created: 1, model: "fixture",
+        choices: [{ index: 0, delta, finish_reason }],
+      }) + "\n\n");
+      emit({ role: "assistant" });
+      if (toolCall) emit({
         tool_calls: [{
           index: 0, id: toolCall.id, type: "function",
           function: { name: toolCall.function.name, arguments: toolCall.function.arguments },
         }],
       });
-      else event({ content: full.choices[0].message.content });
-      event({}, toolCall ? "tool_calls" : "stop");
+      else emit({ content: text });
+      emit({}, toolCall ? "tool_calls" : "stop");
       response.end("data: [DONE]\n\n");
     } catch (error) {
-      response.writeHead(500, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: { message: String(error), type: "server_error" } }));
+      response.writeHead(400, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: {
+        message: error instanceof Error ? error.message : "Unknown synthetic provider error",
+        type: "invalid_request_error",
+      } }));
     }
   });
   await new Promise((resolve, reject) => {
@@ -94,10 +128,13 @@ export async function createMockToolModel() {
     server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Mock model did not bind a TCP port");
+  if (!address || typeof address === "string") throw new Error("Synthetic model did not bind a TCP port");
   return {
     baseURL: "http://127.0.0.1:" + address.port + "/v1",
     get step() { return step; },
+    get probes() { return probes; },
+    get verifiedLocate() { return verifiedLocate; },
+    get verifiedBundle() { return verifiedBundle; },
     get observations() { return [...observations]; },
     close() { return new Promise(resolve => server.close(resolve)); },
   };
