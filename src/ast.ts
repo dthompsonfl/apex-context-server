@@ -1,4 +1,5 @@
 import { access } from "node:fs/promises";
+import { authorizeFile, resolveRoot, boundedOutput } from "./safety.js";
 import path from "node:path";
 import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
@@ -47,14 +48,15 @@ function getProject(): Project {
 
 function getOrCreateSourceFile(filePath: string): SourceFile | undefined {
   const p = getProject();
-  return p.getSourceFile(filePath) ?? p.addSourceFileAtPathIfExists(filePath);
+  const verified = authorizeFile(resolveRoot(), filePath);
+  return p.getSourceFile(verified) ?? p.addSourceFileAtPathIfExists(verified);
 }
 
 export async function extractComponentContext(
   filePath: string,
   nodeName: string,
 ): Promise<string> {
-  const absolutePath = path.resolve(filePath);
+  const absolutePath = authorizeFile(resolveRoot(), filePath);
 
   await access(absolutePath).catch(() => {
     throw new Error(`File not found: ${absolutePath}`);
@@ -94,7 +96,7 @@ export async function extractComponentContext(
     );
   }
 
-  return sections.join("\n\n");
+  return boundedOutput(sections.join("\n\n"));
 }
 
 function findExportedNode(
@@ -294,7 +296,10 @@ function resolveModuleToFile(
 ): string | null {
   if (!specifier.startsWith(".")) {
     if (specifier.startsWith("@/") || specifier.startsWith("~/")) {
-      const aliasBase = path.resolve(process.cwd(), "src", specifier.slice(2));
+      const sourceParts = sourceFile.getFilePath().split(path.sep);
+      const srcIndex = sourceParts.lastIndexOf("src");
+      const sourceRoot = srcIndex >= 0 ? sourceParts.slice(0, srcIndex + 1).join(path.sep) || path.sep : path.join(resolveRoot(), "src");
+      const aliasBase = path.resolve(sourceRoot, specifier.slice(2));
       return findFirstExistingSourceFile([
         `${aliasBase}.ts`,
         `${aliasBase}.tsx`,
