@@ -6,6 +6,23 @@ export const MAX_LINE_LENGTH = 2048;
 export const MAX_QUERY_LENGTH = 256;
 export const MAX_RESPONSE_LENGTH = 60000;
 export const MAX_INDEXED_FILES = 30000;
+export const MAX_TOTAL_INDEXED_BYTES = 64 * 1024 * 1024;
+export const MAX_TOTAL_INDEXED_LINES = 250_000;
+
+export class IndexBudgetExceeded extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IndexBudgetExceeded";
+  }
+}
+
+export function assertIndexBudget(bytes: number, lines: number): void {
+  if (bytes > MAX_TOTAL_INDEXED_BYTES)
+    throw new IndexBudgetExceeded("Workspace exceeds the 64 MiB total indexed source budget.");
+  if (lines > MAX_TOTAL_INDEXED_LINES)
+    throw new IndexBudgetExceeded("Workspace exceeds the 250,000-line index budget.");
+}
+
 
 const DENIED_PARTS = new Set([
   ".git", ".env", ".aws", ".ssh", ".npmrc", ".pypirc", ".cache",
