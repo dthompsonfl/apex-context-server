@@ -14,8 +14,12 @@ const NAMES = [
   "search_code", "find_symbol", "read_component_context",
 ] as const;
 
-function contents(result: { content?: Array<{ type?: string; text?: string }> }): string {
-  return (result.content ?? []).filter(part => part.type === "text").map(part => part.text ?? "").join("\n");
+function contents(result: unknown): string {
+  if (!result || typeof result !== "object" || !("content" in result) || !Array.isArray(result.content)) return "";
+  return result.content.map((part: unknown) => {
+    if (!part || typeof part !== "object" || !("type" in part) || part.type !== "text" || !("text" in part)) return "";
+    return typeof part.text === "string" ? part.text : "";
+  }).join("\n");
 }
 async function fixture() {
   const temp = await mkdtemp(path.join(os.tmpdir(), "apex-mcp-test-"));
