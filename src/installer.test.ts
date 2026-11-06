@@ -134,25 +134,21 @@ test("SIGKILL during uninstall preserves recoverable ownership and allows safe r
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
 
-test("OpenCode V2 layout is installed and safely removed independently of V1", { timeout: 160000 }, async () => {
-  const temp = await mkdtemp(path.join(os.tmpdir(), "apex-v2-install-"));
+test("unverified V2 installation is refused without changing existing settings", { timeout: 30000 }, async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "apex-v2-reject-"));
   const project = path.join(temp, "project");
   await mkdir(project);
   const configPath = path.join(project, "opencode.json");
-  await writeFile(configPath, '{"mcp":{"servers":{"other":{"type":"local","command":["node","other"]}}},"custom":1}\n');
-  const env = { ...process.env, APEX_CONTEXT_PROJECT_DIR: project, OPENCODE_CONFIG_DIR: path.join(temp, "fake-global") };
+  const original = '{"mcp":{"servers":{"other":{"type":"local","command":["node","other"]}}},"custom":1}\n';
+  await writeFile(configPath, original);
+  const env = { ...process.env, APEX_CONTEXT_PROJECT_DIR: project,
+    OPENCODE_CONFIG_DIR: path.join(temp, "fake-global") };
   try {
-    await run(setup, ["--scope", "project", "--client", "v2"], env);
-    const installed = JSON.parse(await readFile(configPath, "utf8"));
-    assert.equal(installed.mcp.servers["apex-context"].type, "local");
-    assert.equal(installed.mcp.servers.other.command[1], "other");
-    assert.equal(installed.custom, 1);
-    const manifest = JSON.parse(await readFile(path.join(project, ".opencode/apex-context-manifest.json"), "utf8"));
-    assert.equal(manifest.client, "v2");
-    await assert.rejects(run(setup, ["--scope", "project", "--client", "v1"], env), /Changing OpenCode client version/);
-    await run(uninstall, ["--scope", "project"], env);
-    const cleaned = JSON.parse(await readFile(configPath, "utf8"));
-    assert.equal(cleaned.mcp.servers.other.command[1], "other");
-    assert.equal(cleaned.mcp.servers["apex-context"], undefined);
+    await assert.rejects(
+      run(setup, ["--scope", "project", "--client", "v2"], env),
+      /Unsupported OpenCode client|only verified OpenCode V1/,
+    );
+    assert.equal(await readFile(configPath, "utf8"), original);
+    await assert.rejects(access(path.join(project, ".opencode/apex-context-manifest.json")));
   } finally { await rm(temp, { recursive: true, force: true }); }
 });

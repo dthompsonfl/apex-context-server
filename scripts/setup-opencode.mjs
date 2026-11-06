@@ -20,8 +20,11 @@ const scope = flag("--scope", "project");
 const client = flag("--client", "v1");
 const dryRun = args.includes("--dry-run");
 const recoverOnly = args.includes("--recover");
-if (!["project", "user"].includes(scope) || !["v1", "v2"].includes(client)) {
-  throw new Error("Usage: setup-opencode.mjs [--scope project|user] [--client v1|v2] [--dry-run|--recover]");
+if (!["project", "user"].includes(scope)) {
+  throw new Error("Usage: setup-opencode.mjs [--scope project|user] [--client v1] [--dry-run|--recover]");
+}
+if (client !== "v1") {
+  throw new Error("Unsupported OpenCode client: only verified OpenCode V1 is supported; V2 MCP registration is not yet reliable");
 }
 const projectDir = path.resolve(process.env.APEX_CONTEXT_PROJECT_DIR || process.cwd());
 const opencodeDir = scope === "project"

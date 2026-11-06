@@ -70,8 +70,9 @@ jobs:
         include:
           - client: v1
             package: opencode-ai@1.19.5
-          - client: v2
-            package: "@opencode/cli@2.0.32"
+          # OpenCode V2 is intentionally not advertised as supported until its
+          # cold-start MCP catalog bug is fixed in a verified stable release.
+          # V1 remains a required, real CLI tool-call integration test.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
