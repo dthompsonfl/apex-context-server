@@ -36,6 +36,8 @@ jobs:
         run: npm run test:security
       - name: Installer rollback tests
         run: npm run test:installer
+      - name: Guard behavior
+        run: npm run test:guard
       - name: Real-client smoke
         run: npm run smoke:mcp
       - name: Isolated recruiter demo

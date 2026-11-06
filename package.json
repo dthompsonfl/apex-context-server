@@ -28,7 +28,8 @@
     "test:installer": "node --test dist/installer.test.js",
     "smoke:mcp": "node --test dist/mcp.integration.test.js",
     "demo": "node scripts/demo.mjs",
-    "bench": "node scripts/bench.mjs"
+    "bench": "node scripts/bench.mjs",
+    "test:guard": "node --test scripts/guard.test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",

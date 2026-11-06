@@ -16,6 +16,7 @@ npm test
 npm run test:integration
 npm run test:security
 npm run test:installer
+npm run test:guard
 npm run smoke:mcp
 npm run demo
 npm run bench
