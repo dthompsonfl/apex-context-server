@@ -1,84 +1,89 @@
 # Apex Context Server
 
-Apex Context Server is a local Model Context Protocol (MCP) server for OpenCode. It gives coding agents AST-aware tools for searching, indexing, mapping, and reading code in large Next.js and Turborepo workspaces.
+Apex is a local **TypeScript Model Context Protocol (MCP) server** that gives coding agents AST-aware search, symbol lookup, import/dependency context, Next.js route discovery and persistent workspace memory. It runs over stdio with no hosted service, embedding model or API key.
 
-**Verification:** [Build, typecheck, fixture tests, and dependency audit passed in GitHub Actions](https://github.com/dthompsonfl/apex-context-server/actions/runs/41545493391) on Node.js 20 and 22 (November 2, 2026). The repository includes a committed `package-lock.json`; its CI now uses `npm ci`. Integration performance and productivity gains are not independently benchmarked.
+## Start with the reproducible demo
 
-To validate the source locally, run `npm install`, `npm run typecheck`, `npm run build`, then `npm test`. The `setup:opencode` script edits user-level OpenCode settings; run it only after reviewing the effect.
-
-## Install
-
-From the repository root:
+Requires Node 20 or 22 and npm.
 
 ```bash
-npm install
+git clone https://github.com/dthompsonfl/apex-context-server.git
+cd apex-context-server
+npm ci --ignore-scripts --no-fund
 npm run build
-npm run setup:opencode
+npm run demo
 ```
 
-Those commands install dependencies, build the TypeScript server, copy the runnable server into `~/.config/opencode/apex-context-server`, and update `~/.config/opencode/opencode.json` so OpenCode starts it as the `apex-context` MCP server.
+The demo launches a **real SDK MCP client and server over stdio**, lists 15 tools, indexes an isolated copy of `examples/demo-workspace`, locates a symbol and Next.js route, reads a context bundle, creates a new file outside the server process and finds it on the same connection, checks synthetic secret redaction, and rejects an outside-root read. Assertions fail loudly. It does not change global OpenCode configuration.
 
-The installer also writes `~/.config/opencode/apex-context-instructions.md` and adds it to OpenCode's global instructions. This makes Apex the preferred system for code search and context retrieval while leaving existing OpenCode settings intact.
+## Features
 
-## TUI System
+- 15 stable MCP tools for discovery, memory, health, watcher, refresh, search, symbols, topology and context
+- JS/TS AST declarations, static/dynamic imports, CommonJS require and imports/importers
+- Common monorepo aliases, JSONC/extended tsconfig, route recognition and workspace packages
+- Local JSON cache with file-content reconciliation, single-flight builds and atomic persistence
+- Workspace-root containment, symlink defense, secret exclusions/redaction and resource limits
+- Opt-in project-first OpenCode installer with dry-run, ownership manifest, JSONC-aware edits and safe uninstall
 
-Apex installs three OpenCode TUI surfaces:
+**Recommended flow:** `locate_code` → `read_context_bundle` → targeted file verification. For a known exported declaration use `read_component_context`.
 
-- Global slash commands:
-  - `/apex`: primes the visual Apex dashboard and then proceeds with the task.
-  - `/apex-boot`: loads the compact agent boot context.
-  - `/apex-find`: locates code through Apex memory, symbol lookup, and exact code search instead of broad shell commands.
-  - `/apex-status`: shows index health and raw-search guard telemetry.
-  - `/apex-where`: asks Apex memory where something lives.
-  - `/apex-refresh`: rebuilds persistent Apex memory after edits or branch changes.
-- A guard plugin at `~/.config/opencode/plugins/apex-context-guard.js` that blocks broad raw CLI discovery commands such as `rg`, recursive `grep`, `find .`, `fd`, `tree`, and `ls -R`.
-- A persistent telemetry file at `~/.config/opencode/apex-context-usage.json`, surfaced by the dashboard, so the TUI can show whether Apex tools are being used and whether broad shell search was blocked.
-
-If raw shell search is truly necessary, prefix the command with `APEX_CONTEXT_ALLOW_RAW_SEARCH=1`. To run the guard in warning-only mode, start OpenCode with `APEX_CONTEXT_GUARD_MODE=warn`.
-
-## Workspace Memory
-
-Apex builds a durable workspace memory file under `~/.config/opencode/apex-context-index/`. The memory contains:
-
-- file paths, basenames, languages, sizes, imports, and importers
-- exported symbols and top-level local declarations with file, line, column, and declaration kind
-- static imports, re-exports, dynamic imports, and CommonJS `require` edges
-- relative imports, workspace package imports, and common `tsconfig`/Next.js app aliases such as `@/*`
-- per-file size, mtime, and SHA-256 content fingerprints
-- Next.js route, layout, page, loading, error, and route-handler files
-- searchable source lines
-- token maps for instant lookup across symbols, paths, imports, and content
-- diagnostics for skipped files, parse failures, alias misses, large files, and redactions
-
-Once built, future lookups load this memory instead of walking the repository. Agents should call `locate_code` first for any "where is this?" question, then use `read_component_context` once a concrete symbol is identified.
-
-The OpenCode guard plugin marks memory stale when files change. The next Apex lookup automatically rebuilds the persisted memory before answering, then clears the stale flag.
-
-Secret-like values are redacted before source lines are written to memory. `.env`, private keys, and lockfiles are ignored.
-
-## Tools
-
-- `prime_workspace_context`: renders the Apex TUI dashboard with topology, index status, guard telemetry, and the low-token search workflow.
-- `get_agent_boot_context`: returns a compact always-fresh repo brief for agents.
-- `get_context_health`: shows a compact dashboard for index and guard status.
-- `get_workspace_memory`: returns the persistent memory map summary and cache location.
-- `refresh_workspace_memory`: force-rebuilds and persists the workspace memory.
-- `watch_workspace_memory`: starts or reports the live watcher.
-- `refresh_changed_files`: refreshes memory after changed/deleted/added files are detected.
-- `get_index_diagnostics`: reports skipped files, parse failures, redactions, alias misses, and watcher status.
-- `locate_code`: instantly locates likely files, symbols, routes, imports, and source lines from memory.
-- `read_context_bundle`: returns edit-ready context for a file, symbol, route, or query.
-- `get_workspace_topology`: scans `apps/*` and `packages/*` package manifests and returns a workspace dependency graph.
-- `index_workspace`: loads or builds the persistent AST-backed workspace memory.
-- `search_code`: searches memory-indexed source lines with plain text or regular expressions.
-- `find_symbol`: finds exported and top-level local symbols discovered by the indexer.
-- `read_component_context`: returns an exported symbol and the local or imported type definitions it depends on.
-
-## Manual Start
+## Direct MCP launch
 
 ```bash
-npm run build
-npm start
+APEX_CONTEXT_ROOT=/absolute/workspace/path npm start
 ```
 
-The MCP server communicates over stdio and is normally launched by OpenCode.
+The server speaks MCP over stdout, not an interactive shell prompt. It defaults to its process CWD when `APEX_CONTEXT_ROOT` is absent. Explicit tool roots may narrow the authorized workspace, never escape it. `OPENCODE_CONFIG_DIR` specifies cache/telemetry storage; otherwise use `~/.config/opencode`. Configure any supported MCP client to spawn `node /absolute/path/to/dist/index.js`.
+
+The official MCP Inspector CLI can independently inspect tool metadata after build:
+
+```bash
+npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
+```
+
+The Inspector binary is optional, not downloaded by CI. OpenCode versions differ. A real OpenCode client smoke is separate from the SDK test and is **not claimed verified** without its own evidence.
+
+## Opt-in OpenCode setup
+
+Project scope is the default and targets `APEX_CONTEXT_PROJECT_DIR` or the current directory.
+
+```bash
+npm run setup:opencode -- --scope project --dry-run
+npm run setup:opencode -- --scope project
+npm run uninstall:opencode -- --scope project
+```
+
+Use `APEX_CONTEXT_PROJECT_DIR=/path/to/another/project` to target another project. `--scope user` explicitly operates in your OpenCode user config. Review its dry-run first. The installed raw-search guard **warns by default**; set `APEX_CONTEXT_GUARD_MODE=strict` to make it block heuristic broad searches. This is workflow policy, not filesystem security.
+
+## Tests and reproducible measurements
+
+```bash
+npm run typecheck && npm run build
+npm test
+npm run test:unit
+npm run test:integration
+npm run test:security
+npm run test:installer
+npm run smoke:mcp
+npm run demo
+npm run bench
+npm audit --audit-level=high
+npm pack --dry-run
+```
+
+CI executes the verification matrix on Node 20 and 22. Only the CI run matching the current commit proves that commit's status.
+
+Resource budgets: 1 MiB indexed file, 30,000 files, 2,048 characters per indexed line, 256-character query, 60,000-character response. Complex regex forms are restricted. Content freshness checks intentionally prioritize correctness over large-repo speed. Redaction is best-effort and **not a guarantee that all secrets are detected**.
+
+## Further reading
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security and limitations](docs/SECURITY.md)
+- [Live demo](docs/DEMO.md)
+- [Verification ledger](docs/VERIFICATION.md)
+- [Benchmarks](docs/BENCHMARKS.md)
+- [Portfolio case study](docs/PORTFOLIO_CASE_STUDY.md)
+
+Troubleshooting: rebuild `dist` if missing; rerun `npm ci` for missing dependencies; for a corrupt cache, stop the server and remove only the matching JSON in `apex-context-index`. When watcher monitoring is unavailable, the next retrieval still reconciles the filesystem. Installation conflicts should be resolved by reviewing owned-path manifests, not deleting unrelated config.
+
+**License:** None has been granted. Public visibility is not a general reuse license.
