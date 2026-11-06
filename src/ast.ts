@@ -1,5 +1,4 @@
-import { access } from "node:fs/promises";
-import { authorizeFile, resolveRoot, boundedOutput } from "./safety.js";
+import { authorizeFile, readAuthorizedSourceSync, resolveRoot, boundedOutput } from "./safety.js";
 import path from "node:path";
 import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
@@ -48,8 +47,8 @@ function getProject(): Project {
 
 function getOrCreateSourceFile(filePath: string): SourceFile | undefined {
   const p = getProject();
-  const verified = authorizeFile(resolveRoot(), filePath);
-  return p.getSourceFile(verified) ?? p.addSourceFileAtPathIfExists(verified);
+  const verified = readAuthorizedSourceSync(resolveRoot(), filePath);
+  return p.createSourceFile(verified.path, verified.text, { overwrite: true });
 }
 
 export async function extractComponentContext(
@@ -58,15 +57,10 @@ export async function extractComponentContext(
 ): Promise<string> {
   const absolutePath = authorizeFile(resolveRoot(), filePath);
 
-  await access(absolutePath).catch(() => {
-    throw new Error(`File not found: ${absolutePath}`);
-  });
-
   const sourceFile = getOrCreateSourceFile(absolutePath);
   if (!sourceFile) {
     throw new Error(`Failed to parse: ${absolutePath}`);
   }
-  sourceFile.refreshFromFileSystemSync();
 
   const targetNode = findExportedNode(sourceFile, nodeName);
   if (!targetNode) {
