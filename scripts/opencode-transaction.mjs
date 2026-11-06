@@ -113,6 +113,7 @@ export async function applyTransaction(directory, changes, allowedPaths) {
       if (before !== null) await cp(target, backup, { recursive: true, dereference: false });
       const staged = path.join(journal, "stage", String(id));
       if (change.kind === "file") await makePrivateFile(staged, change.content);
+      else if (change.kind === "derivedFile") await makePrivateFile(staged, change.prepare(entries));
       else if (change.kind === "directory") await cp(change.source, staged, { recursive: true, dereference: true });
       else if (change.kind === "runtime") {
         await mkdir(staged, { mode: 0o700 });
