@@ -144,9 +144,14 @@ export function setJsoncValue(raw, path, value) {
   const serialized = JSON.stringify(value, null, 2).replace(/\n/g, "\n" + childIndent);
   if (field) return raw.slice(0, field.value.start) + serialized + raw.slice(field.value.end);
   const close = parent.end - 1;
-  const prefix = parent.fields.length && !/,\s*$/.test(raw.slice(parent.fields.at(-1).end, close)) ? "," : "";
-  const addition = prefix + "\n" + childIndent + JSON.stringify(key) + ": " + serialized + "\n" + indent;
-  return raw.slice(0, close) + addition + raw.slice(close);
+  // Insert immediately after the previous value, before its original suffix.
+  // Removing this generated field can then restore the previous JSONC bytes,
+  // including inline comments, trailing commas and original brace spacing.
+  const previous = parent.fields.at(-1);
+  const position = previous ? previous.end : close;
+  const addition = (previous ? "," : "") + "\n" + childIndent +
+    JSON.stringify(key) + ": " + serialized + (previous ? "" : "\n" + indent);
+  return raw.slice(0, position) + addition + raw.slice(position);
 }
 export function deleteJsoncValue(raw, path) {
   const parent = findObject(raw, path.slice(0, -1));
