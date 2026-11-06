@@ -95,8 +95,11 @@ export function assertSafeQuery(query: string): void {
 /** A deliberately limited regular-expression subset prevents nested-quantifier ReDoS. */
 export function assertSafeRegex(query: string): void {
   assertSafeQuery(query);
-  if (/[(){}|]/.test(query) || /\\[1-9]/.test(query) ||
-      (query.match(/\.\*/g) || []).length > 1 || /(?:\+|\*){2}/.test(query)) {
+  const withoutEscapes = query.replace(/\\./g, "");
+  const outsideClasses = withoutEscapes.replace(/\[[^\]]*\]/g, "");
+  // Repeated quantifiers over adjacent atoms can cause polynomial backtracking.
+  const quantifiers = outsideClasses.match(/[+*?]/g) ?? [];
+  if (/[(){}|]/.test(outsideClasses) || /\\[1-9]/.test(query) || quantifiers.length > 1) {
     throw new Error("Unsafe regex construct; use literal search or a simple character-class pattern.");
   }
 }
