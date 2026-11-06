@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fg from "fast-glob";
 import { updateUsageState } from "./usage-state.js";
+import { atomicWritePrivateFile, cleanStaleCacheTemps } from "./atomic-cache.js";
 import { authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
 import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
@@ -343,6 +344,7 @@ async function buildWorkspaceIndexInternal(options: BuildIndexOptions): Promise<
   const startedAt = Date.now();
   const root = resolveRoot(options.root);
   const indexPath = getIndexPath(root);
+  await cleanStaleCacheTemps(indexPath);
   const forceRefresh =
     options.force || (await isWorkspaceMemoryMarkedStale(root));
 
@@ -1691,12 +1693,7 @@ async function readPersistedIndexUnchecked(
 }
 
 async function writePersistedIndex(index: WorkspaceIndex): Promise<void> {
-  await mkdir(path.dirname(index.indexPath), { recursive: true, mode: 0o700 });
-  const temporary = `${index.indexPath}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
-  try {
-    await writeFile(temporary, `${JSON.stringify(index)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, index.indexPath);
-  } finally { await rm(temporary, { force: true }); }
+  await atomicWritePrivateFile(index.indexPath, JSON.stringify(index) + "\n");
 }
 
 async function isPersistedIndexFresh(index: WorkspaceIndex): Promise<boolean> {
