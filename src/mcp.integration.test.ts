@@ -37,7 +37,7 @@ async function fixture() {
   await writeFile(path.join(root, "apps/web/src/app/page.tsx"), 'import { Button } from "@/components/Button";\nexport default function Page() { return Button({ label: "Hello" }); }\n');
   await writeFile(path.join(root, "packages/ui/src/index.ts"), 'export { greet } from "./utils";\n');
   await writeFile(path.join(root, "packages/ui/src/utils.ts"), 'export function greet(name: string) { return "Hello " + name; }\n');
-  await writeFile(path.join(root, "apps/web/src/components/secrets.ts"), [
+  await writeFile(path.join(root, "apps/web/src/components/canary.ts"), [
     'export const example = "-----BEGIN PRIVATE KEY-----',
     'SYNTHETIC_PRIVATE_KEY_NOT_VALID_ONLY_FOR_TESTING',
     '-----END PRIVATE KEY-----";',
@@ -110,7 +110,7 @@ test("real stdio MCP discovers and invokes all 15 public tools with live source,
 
     const secret = await client.callTool({ name: "search_code", arguments: { query: "SYNTHETIC_PRIVATE_KEY_NOT_VALID_ONLY_FOR_TESTING" } });
     assert.deepEqual(JSON.parse(contents(secret)).matches, [], "secret material must not be searchable");
-    const astSecret = await client.callTool({ name: "read_component_context", arguments: { filepath: path.join(root, "apps/web/src/components/secrets.ts"), nodeName: "example" } });
+    const astSecret = await client.callTool({ name: "read_component_context", arguments: { filepath: path.join(root, "apps/web/src/components/canary.ts"), nodeName: "example" } });
     assert.doesNotMatch(contents(astSecret), /SYNTHETIC_PRIVATE_KEY_NOT_VALID_ONLY_FOR_TESTING/);
     const regex = await client.callTool({ name: "search_code", arguments: { query: "(a+)+$", regex: true } });
     assert.equal(regex.isError, true);
