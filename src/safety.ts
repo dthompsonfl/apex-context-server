@@ -31,7 +31,7 @@ export function resolveRoot(requested?: string): string {
   const target = path.resolve(requested || anchor);
   const authorized = realpathSync(anchor);
   const canonical = realpathSync(target);
-  if (process.env.APEX_CONTEXT_ROOT && !contained(authorized, canonical)) {
+  if (!contained(authorized, canonical)) {
     throw new Error("Requested root is outside the authorized workspace.");
   }
   return canonical;
@@ -39,7 +39,7 @@ export function resolveRoot(requested?: string): string {
 
 /** Re-check canonical paths at each read: lexical containment alone does not stop symlinks. */
 export function authorizeFile(root: string, filepath: string): string {
-  const canonicalRoot = resolveRoot(root);
+  const canonicalRoot = realpathSync(path.resolve(root));
   const requested = path.resolve(canonicalRoot, filepath);
   if (!contained(canonicalRoot, requested)) {
     throw new Error("Source path is outside the authorized workspace.");
