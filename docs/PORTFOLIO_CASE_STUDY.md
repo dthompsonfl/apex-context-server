@@ -1,25 +1,33 @@
 # Engineering case study: Apex Context Server
 
-## Problem
-Code assistants need reliable answers about file locations, exported symbols, importers and nearby context. Repeated broad search can cost time and produce incomplete context. A useful navigation tool must also avoid stale results, arbitrary filesystem reads and destructive editor configuration changes.
+## The engineering problem
 
-## Technical solution
-Implemented a local TypeScript ESM Model Context Protocol server with **15 real public tools**, AST-backed JS/TS symbol lookup, import/dependency relationships, Next.js route discovery, ranked text retrieval and persisted source context. Added canonical workspace containment, synthetic-secret redaction, response/regex/file budgets, atomic JSON persistence and live-content reconciliation.
+Coding agents need dependable answers about the locations and relationships of symbols, imports, routes and nearby types before editing source. A search result is not useful when its cache is stale, its client cannot call it, its output discloses unrelated sensitive files, or its installer damages a developer's configuration.
 
-Chose local stdio and JSON storage over an unnecessary hosted service or embeddings. Preserved existing MCP public tool names. Implemented an optional project-first OpenCode installer with reversible owned assets, and a warning-only default search guard.
+## Implemented architecture
 
-## Independent proof
-The repo contains an SDK-driven real MCP client test, security and installer regression suites, a synthetic npm workspace fixture, a runnable no-global-config demo, a benchmark script and a Node 20/22 CI matrix. See [Verification](VERIFICATION.md) for the exact matching GitHub Actions run. These proofs concern behavior of the program, not user adoption.
+Apex is a local TypeScript ESM MCP stdio server with **15 public tools**, AST-based JS/TS symbol extraction, Next.js route discovery, import/importer maps, ranked line search, bounded edit-ready context bundles and local JSON indexing. This is a real tool, not a hosted assistant or demonstration mock.
 
-Review files: `src/index.ts`, `src/indexer.ts`, `src/ast.ts`, `src/safety.ts`, `src/mcp.integration.test.ts`, `src/security.test.ts`, `src/installer.test.ts`, `scripts/demo.mjs` and `.github/workflows/ci.yml`.
+The hardening work includes canonical workspace authorization, no-follow descriptor-based source parsing, authorized local tsconfig inheritance, multi-line secret filtering, query/regex/line/file/aggregate-size limits, per-root cache reconciliation, private synced atomic persistence, SIGKILL cache recovery, watcher readiness and degraded polling, and an owned reversible OpenCode installer with a durable transaction journal.
 
-## Resume-ready descriptions (after checking current CI)
+## Evidence an interviewer can reproduce
 
-- Engineered a local TypeScript MCP server exposing 15 AST-aware code search, navigation and context-retrieval tools for Next.js-style workspaces.
-- Built persistent workspace indexing and import/dependency lookup with source containment, redaction, output budgets and atomic cache updates.
-- Added live stdio MCP integration tests, safe installation/reversal tests and a reproducible recruiter demo and benchmark workflow.
+- `npm ci --ignore-scripts --no-fund && npm run build && npm run demo`: real MCP SDK client/server, tool discovery, code lookup and context, external file edit, redaction and root-boundary refusal.
+- `npm run smoke:package`: build an npm tarball, install it without the repository's development dependencies and invoke its installed binary through MCP.
+- `npm test`: indexing, configuration, security, root boundaries, cache crash/restart, watcher degradation, Git changes and installation recovery.
+- The dedicated OpenCode CI job uses **real `opencode-ai@1.19.5`** and validates two actual MCP calls through the agent. The deterministic local model stub selects calls but **does not simulate MCP outputs**.
+- `npm run bench`: a reproducible, small synthetic benchmark with transparent methods. No comparative improvement is claimed.
 
-Do not claim external customers, business revenue, productivity improvements, benchmark speedups, full language-server equivalence or tested OpenCode CLI interoperability without independent evidence.
+Core technical files include `src/index.ts`, `src/indexer.ts`, `src/ast.ts`, `src/safety.ts`, `src/atomic-cache.ts`, `src/watcher.ts`, `scripts/opencode-transaction.mjs`, `src/mcp.integration.test.ts`, `src/cache-recovery.test.ts`, `src/installer.test.ts` and `scripts/package-smoke.mjs`. The [verification ledger](VERIFICATION.md) links actual CI evidence.
 
-## Next evidence to collect
-Test a specific supported OpenCode CLI version end to end, perform broader workload/secret-format testing and compare paired coding tasks with and without Apex. These are **not completed features or verified outcomes**.
+## Design decisions and scope
+
+Local stdio avoids hosting and multi-tenant auth. JSON persistence keeps retrieval inspectable. Reconciliation/full rebuild is prioritized over speculative incremental postings. Unverified OpenCode V2 integration is *explicitly refused* by setup until the client's MCP registration defects are resolved and tested. No GUI, Docker, vector index, cloud service or package publication was added.
+
+## Copy-ready portfolio/resume statements
+
+- Engineered a TypeScript Model Context Protocol server exposing 15 AST-aware code navigation, dependency mapping and source-context tools for Next.js-style repositories.
+- Hardened local repository retrieval with workspace-root authorization, source redaction, bounded indexing, atomic persistence and crash-recovery regression tests.
+- Developed real-client MCP and OpenCode V1 integration tests, reversible installation tooling and reproducible clean-package demonstrations for independent technical review.
+
+**Claims not supported:** production customers, third-party adoption, reduced agent token usage, superior speed over `rg`, full security certification or OpenCode V2 compatibility. Verify the final commit's GitHub Actions checks before describing that revision as green.
