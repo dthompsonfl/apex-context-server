@@ -6,7 +6,7 @@ import fg from "fast-glob";
 import { updateUsageState } from "./usage-state.js";
 import { atomicWritePrivateFile, cleanStaleCacheTemps } from "./atomic-cache.js";
 import { readAuthorizedSource, authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, assertIndexBudget, IndexBudgetExceeded, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
-import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
+import { Node, Project, SourceFile, SyntaxKind, ts } from "ts-morph";
 
 const INDEX_SCHEMA_VERSION = 6;
 const MAX_RESULTS = 200;
@@ -1201,6 +1201,51 @@ function findWorkspacePackageImport(
   return null;
 }
 
+/**
+ * Resolve tsconfig JSONC extends only when the entire inheritance chain belongs
+ * to the authorized workspace. Reject package/remote inheritance rather than
+ * asking TypeScript to read a second, unverified filesystem location.
+ */
+async function validateAuthorizedTsConfigChain(
+  root: string, filename: string, seen = new Set<string>(),
+): Promise<void> {
+  if (seen.size >= 24) throw new Error("tsconfig extends depth exceeds 24");
+  const { path: canonical, text } = await readAuthorizedSource(root, filename);
+  if (seen.has(canonical)) throw new Error("Cyclic tsconfig extends chain");
+  const parsed = ts.parseConfigFileTextToJson(canonical, text);
+  if (parsed.error || !parsed.config || typeof parsed.config !== "object") {
+    throw new Error("Invalid TypeScript tsconfig JSONC");
+  }
+  const declared = parsed.config.extends;
+  if (declared === undefined) return;
+  const extensions = Array.isArray(declared) ? declared : [declared];
+  if (!extensions.every((entry: unknown) => typeof entry === "string" && (entry.startsWith(".") || path.isAbsolute(entry)))) {
+    throw new Error("Only authorized local tsconfig extends are supported");
+  }
+  seen.add(canonical);
+  try {
+    for (const item of extensions as string[]) {
+      const base = path.resolve(path.dirname(canonical), item);
+      const candidates = base.endsWith(".json")
+        ? [base] : [base + ".json", path.join(base, "tsconfig.json")];
+      let matched = false;
+      for (const candidate of candidates) {
+        try {
+          await readAuthorizedSource(root, candidate);
+          await validateAuthorizedTsConfigChain(root, candidate, seen);
+          matched = true;
+          break;
+        } catch (error) {
+          const errno = error as NodeJS.ErrnoException;
+          if (errno.code === "ENOENT" || errno.code === "ENOTDIR") continue;
+          throw error;
+        }
+      }
+      if (!matched) throw new Error("Referenced local tsconfig was not found or authorized");
+    }
+  } finally { seen.delete(canonical); }
+}
+
 async function readTsConfigAliases(root: string, files: string[]): Promise<TsConfigAlias[]> {
   const aliases: TsConfigAlias[] = [];
 
@@ -1211,7 +1256,8 @@ async function readTsConfigAliases(root: string, files: string[]): Promise<TsCon
     }
 
     try {
-      // ts-morph delegates tsconfig JSONC and inherited-extends parsing to TypeScript.
+      // Validate every local inheritance edge before TypeScript reads the config graph.
+      await validateAuthorizedTsConfigChain(root, absolutePath);
       const configured = new Project({ tsConfigFilePath: absolutePath, skipAddingFilesFromTsConfig: true });
       const compilerOptions = configured.getCompilerOptions();
       if (!compilerOptions.paths) continue;
