@@ -1,0 +1,1 @@
+{"name":"@demo/ui","version":"0.0.0","exports":{".":"./src/index.ts","./panel":"./src/Panel.tsx"}}

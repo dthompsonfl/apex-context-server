@@ -1,0 +1,1 @@
+{"name":"@demo/web","private":true,"dependencies":{"@demo/ui":"workspace:*"}}
