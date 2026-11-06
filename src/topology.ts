@@ -1,6 +1,7 @@
 import fg from "fast-glob";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { authorizeFile, isSensitivePath } from "./safety.js";
 
 export interface PackageMeta {
   name: string;
@@ -23,14 +24,17 @@ export async function getWorkspaceTopology(
     cwd,
     ignore: ["**/node_modules/**", "**/dist/**", "**/.next/**"],
     onlyFiles: true,
+    followSymbolicLinks: false,
   });
 
   const raw: Array<{ filePath: string; pkg: WorkspacePackageJson }> = [];
   const allNames = new Set<string>();
 
   for (const filePath of files.sort()) {
+    if (isSensitivePath(path.relative(cwd, filePath))) continue;
     try {
-      const pkg = JSON.parse(await readFile(filePath, "utf8")) as PackageJson;
+      const allowed = authorizeFile(cwd, filePath);
+      const pkg = JSON.parse(await readFile(allowed, "utf8")) as PackageJson;
       if (!pkg.name || typeof pkg.name !== "string") {
         continue;
       }
@@ -126,8 +130,8 @@ async function getWorkspacePackagePatterns(root: string): Promise<string[]> {
   ]);
 
   try {
-    const rootPkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as PackageJson;
-    for (const workspace of normalizeWorkspaces(rootPkg.workspaces)) {
+    const rootPkg = JSON.parse(await readFile(authorizeFile(root, "package.json"), "utf8")) as PackageJson;
+    for (const workspace of normalizeWorkspaces(rootPkg.workspaces).filter(isSafeWorkspaceGlob)) {
       patterns.add(`${workspace.replace(/\/?$/, "")}/package.json`);
     }
   } catch {
@@ -135,8 +139,8 @@ async function getWorkspacePackagePatterns(root: string): Promise<string[]> {
   }
 
   try {
-    const pnpmWorkspace = await readFile(path.join(root, "pnpm-workspace.yaml"), "utf8");
-    for (const workspace of parsePnpmWorkspacePackages(pnpmWorkspace)) {
+    const pnpmWorkspace = await readFile(authorizeFile(root, "pnpm-workspace.yaml"), "utf8");
+    for (const workspace of parsePnpmWorkspacePackages(pnpmWorkspace).filter(isSafeWorkspaceGlob)) {
       patterns.add(`${workspace.replace(/\/?$/, "")}/package.json`);
     }
   } catch {
@@ -182,4 +186,8 @@ function parsePnpmWorkspacePackages(value: string): string[] {
   }
 
   return packages;
+}
+
+function isSafeWorkspaceGlob(value: string): boolean {
+  return !path.isAbsolute(value) && !value.split(/[\\/]/).includes("..") && !/^[!~]/.test(value) && !/^[A-Za-z]:/.test(value);
 }
