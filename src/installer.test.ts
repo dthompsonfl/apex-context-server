@@ -65,3 +65,18 @@ test("installer refuses unowned MCP collisions and uninstall refuses modified ow
     assert.match(await readFile(plugin, "utf8"), /user change/);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });
+
+test("explicit user scope installs only in isolated supplied config directory", { timeout: 160000 }, async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "apex-user-scope-"));
+  const fakeGlobal = path.join(temp, "fake-home-config");
+  const env = { ...process.env, OPENCODE_CONFIG_DIR: fakeGlobal, APEX_CONTEXT_PROJECT_DIR: path.join(temp, "unrelated-project") };
+  try {
+    await run(setup, ["--scope", "user", "--dry-run"], env);
+    await assert.rejects(access(path.join(fakeGlobal, "opencode.json")));
+    await run(setup, ["--scope", "user"], env);
+    assert.match(await readFile(path.join(fakeGlobal, "opencode.json"), "utf8"), /apex-context/);
+    await run(uninstall, ["--scope", "user"], env);
+    await assert.rejects(access(path.join(fakeGlobal, "apex-context-manifest.json")));
+    await assert.rejects(access(path.join(fakeGlobal, "apex-context-server")));
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
