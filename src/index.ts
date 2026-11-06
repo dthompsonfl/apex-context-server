@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { extractComponentContext } from "./ast.js";
+import { resolveRoot as authorizedRoot, authorizeFile, boundedOutput } from "./safety.js";
 import { getAgentBootContext, readContextBundle } from "./context.js";
 import { getContextHealth, primeWorkspaceContext } from "./dashboard.js";
 import {
@@ -380,7 +381,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "get_agent_boot_context":
       return asToolResult(async () => {
         return getAgentBootContext({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
           maxFiles: optionalNumber(input.maxFiles, "maxFiles"),
         });
       }, "Error building Apex agent boot context");
@@ -388,7 +389,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "read_context_bundle":
       return asToolResult(async () => {
         return readContextBundle({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
           query: optionalString(input.query, "query"),
           filepath: optionalString(input.filepath, "filepath"),
           nodeName: optionalString(input.nodeName, "nodeName"),
@@ -399,7 +400,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "watch_workspace_memory":
       return asToolResult(async () => {
         const status = await watchWorkspaceMemory({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
         });
         return JSON.stringify(status, null, 2);
       }, "Error starting Apex workspace watcher");
@@ -407,13 +408,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "refresh_changed_files":
       return asToolResult(async () => {
         return refreshChangedWorkspaceFiles({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
         });
       }, "Error refreshing changed files");
 
     case "get_index_diagnostics":
       return asToolResult(async () => {
-        const root = optionalString(input.root, "root");
+        const root = authorizedRoot(optionalString(input.root, "root"));
         const diagnostics = await getIndexDiagnostics({ root });
         const watcher = getWatcherStatus(root);
         return JSON.stringify({ ...diagnostics, watcher }, null, 2);
@@ -422,7 +423,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "prime_workspace_context":
       return asToolResult(async () => {
         return primeWorkspaceContext({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
           force: optionalBoolean(input.force, "force") ?? false,
           maxPackages: optionalNumber(input.maxPackages, "maxPackages"),
           maxFiles: optionalNumber(input.maxFiles, "maxFiles"),
@@ -432,14 +433,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "get_context_health":
       return asToolResult(async () => {
         return getContextHealth({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
         });
       }, "Error reading Apex context health");
 
     case "get_workspace_topology":
       return asToolResult(async () => {
         const topology = await getWorkspaceTopology(
-          optionalString(input.root, "root"),
+          authorizedRoot(optionalString(input.root, "root")),
         );
         return `${formatTopologySummary(topology)}\n\n${JSON.stringify(
           topology,
@@ -451,7 +452,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "get_workspace_memory":
       return asToolResult(async () => {
         const index = await buildWorkspaceIndex({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
         });
         return `${formatMemorySummary(index)}\n\n${JSON.stringify(
           createWorkspaceMemorySnapshot(
@@ -466,7 +467,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "refresh_workspace_memory":
       return asToolResult(async () => {
         const index = await refreshChangedFiles({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
         });
         return `${formatIndexSummary(index)}\n\n${JSON.stringify(
           createWorkspaceMemorySnapshot(index, 25),
@@ -478,7 +479,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "locate_code":
       return asToolResult(async () => {
         const result = await locateCode(requiredString(input.query, "query"), {
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
           maxResults: optionalNumber(input.maxResults, "maxResults"),
           kind: optionalLocationKind(input.kind, "kind"),
         });
@@ -488,7 +489,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "index_workspace":
       return asToolResult(async () => {
         const index = await buildWorkspaceIndex({
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
           force: optionalBoolean(input.force, "force") ?? false,
         });
         return `${formatIndexSummary(index)}\n\n${JSON.stringify(
@@ -501,7 +502,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "search_code":
       return asToolResult(async () => {
         const result = await searchCode(requiredString(input.query, "query"), {
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
           glob: optionalStringOrStringArray(input.glob, "glob"),
           maxResults: optionalNumber(input.maxResults, "maxResults"),
           caseSensitive:
@@ -514,7 +515,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "find_symbol":
       return asToolResult(async () => {
         const result = await findSymbol(requiredString(input.query, "query"), {
-          root: optionalString(input.root, "root"),
+          root: authorizedRoot(optionalString(input.root, "root")),
           exact: optionalBoolean(input.exact, "exact") ?? false,
           maxResults: optionalNumber(input.maxResults, "maxResults"),
         });
@@ -524,7 +525,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     case "read_component_context":
       return asToolResult(async () => {
         return extractComponentContext(
-          requiredString(input.filepath, "filepath"),
+          authorizeFile(authorizedRoot(), requiredString(input.filepath, "filepath")),
           requiredString(input.nodeName, "nodeName"),
         );
       }, "Error extracting component context");
@@ -559,16 +560,16 @@ async function asToolResult(
   | { isError: true; content: Array<{ type: "text"; text: string }> }
 > {
   try {
-    return { content: [{ type: "text", text: await fn() }] };
+    return { content: [{ type: "text", text: boundedOutput(await fn()) }] };
   } catch (err) {
     return {
       isError: true,
       content: [
         {
           type: "text",
-          text: `${errorPrefix}: ${
+          text: boundedOutput(`${errorPrefix}: ${
             err instanceof Error ? err.message : String(err)
-          }`,
+          }`),
         },
       ],
     };
