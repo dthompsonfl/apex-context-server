@@ -78,7 +78,7 @@ async function main() {
   const found = hasJsoncProperty(raw, mcpPath) ? getJsoncValue(raw, mcpPath) : undefined;
   if (hasJsoncProperty(raw, otherPath)) throw new Error("Conflicting Apex MCP entry in the other client schema");
   if (found !== undefined && !previous) {
-    throw new Error("Apex MCP entry exists but this installer does not own it");
+    throw new Error("Apex MCP entry already exists and is not owned by this installer");
   }
   if (previous && JSON.stringify(found) !== JSON.stringify(previous.server)) {
     throw new Error("Apex MCP entry was manually modified; refusing to overwrite it");
