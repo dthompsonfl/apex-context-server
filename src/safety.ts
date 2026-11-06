@@ -103,7 +103,8 @@ export function assertSafeRegex(query: string): void {
 
 export function boundedOutput(value: string): string {
   const sanitized = redactSource(value).text;
-  return sanitized.length <= MAX_RESPONSE_LENGTH
-    ? sanitized
-    : sanitized.slice(0, MAX_RESPONSE_LENGTH) + "\n[OUTPUT TRUNCATED: refine query or lower maxResults]";
+  if (sanitized.length > MAX_RESPONSE_LENGTH) {
+    throw new Error("MCP output exceeds 60,000 characters; narrow the query or lower result limits.");
+  }
+  return sanitized;
 }
