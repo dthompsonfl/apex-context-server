@@ -38,13 +38,15 @@ export const ApexContextGuard = async ({ client }) => {
         return;
       }
 
+      const strict = process.env.APEX_CONTEXT_GUARD_MODE === "strict";
       await updateWorkspaceState((state) => {
-        state.rawSearchBlocked = (state.rawSearchBlocked ?? 0) + 1;
-        state.lastBlockedCommand = command.slice(0, 500);
+        if (strict) state.rawSearchBlocked = (state.rawSearchBlocked ?? 0) + 1;
+        else state.rawSearchWarned = (state.rawSearchWarned ?? 0) + 1;
+        state.lastBroadSearchCommand = command.slice(0, 500);
       });
 
       const message = [
-        "Apex Context Guard blocked a broad CLI search.",
+        "Apex Context Guard detected a broad CLI search.",
         "",
         "Use Apex instead:",
         "- apex-context_search_code for text search",
@@ -58,7 +60,7 @@ export const ApexContextGuard = async ({ client }) => {
 
       await log(client, "warn", message);
 
-      if ((process.env.APEX_CONTEXT_GUARD_MODE || "strict") === "warn") {
+      if (!strict) {
         return;
       }
 
@@ -177,7 +179,6 @@ function isFileLifecycleEvent(type) {
     "file.moved",
     "file.watcher.updated",
     "workspace.changed",
-    "session.updated",
   ].includes(type);
 }
 
