@@ -1,11 +1,12 @@
 import crypto from "node:crypto";
-import { access, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, stat, writeFile, rename, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import fg from "fast-glob";
+import { authorizeFile, isSensitivePath, MAX_FILE_BYTES, MAX_INDEXED_FILES, MAX_LINE_LENGTH, redactSource, assertSafeQuery, assertSafeRegex } from "./safety.js";
 import { Node, Project, SourceFile, SyntaxKind } from "ts-morph";
 
-const INDEX_SCHEMA_VERSION = 5;
+const INDEX_SCHEMA_VERSION = 6;
 const MAX_RESULTS = 200;
 
 const CODE_EXTENSIONS =
@@ -115,7 +116,8 @@ const SOURCE_EXTENSIONS = [
   ".json",
 ];
 
-let cachedIndex: WorkspaceIndex | null = null;
+const cachedIndexes = new Map<string, WorkspaceIndex>();
+const runningBuilds = new Map<string, Promise<WorkspaceIndex>>();
 
 export interface BuildIndexOptions {
   root?: string;
@@ -320,9 +322,23 @@ interface TsConfigAlias {
   targets: string[];
 }
 
-export async function buildWorkspaceIndex(
-  options: BuildIndexOptions = {},
-): Promise<WorkspaceIndex> {
+export async function buildWorkspaceIndex(options: BuildIndexOptions = {}): Promise<WorkspaceIndex> {
+  const root = resolveRoot(options.root);
+  const running = runningBuilds.get(root);
+  if (running) {
+    await running;
+    if (!options.force && !(await isWorkspaceMemoryMarkedStale(root))) {
+      const current = cachedIndexes.get(root);
+      if (current && await isPersistedIndexFresh(current)) return current;
+    }
+  }
+  const task = buildWorkspaceIndexInternal({ ...options, root });
+  runningBuilds.set(root, task);
+  try { return await task; }
+  finally { if (runningBuilds.get(root) === task) runningBuilds.delete(root); }
+}
+
+async function buildWorkspaceIndexInternal(options: BuildIndexOptions): Promise<WorkspaceIndex> {
   const startedAt = Date.now();
   const root = resolveRoot(options.root);
   const indexPath = getIndexPath(root);
@@ -330,13 +346,12 @@ export async function buildWorkspaceIndex(
     options.force || (await isWorkspaceMemoryMarkedStale(root));
 
   if (!forceRefresh) {
-    if (cachedIndex?.root === root) {
-      return cachedIndex;
-    }
+    const current = cachedIndexes.get(root);
+    if (current && await isPersistedIndexFresh(current)) return current;
 
     const persisted = await readPersistedIndex(root, indexPath);
     if (persisted) {
-      cachedIndex = persisted;
+      cachedIndexes.set(root, persisted);
       return persisted;
     }
   }
@@ -348,8 +363,10 @@ export async function buildWorkspaceIndex(
     ignore: IGNORE_PATTERNS,
     onlyFiles: true,
     unique: true,
+    followSymbolicLinks: false,
   });
-  const aliases = await readTsConfigAliases(root, files);
+  if (files.length > MAX_INDEXED_FILES) throw new Error("Workspace exceeds the 30,000-file indexing limit.");
+  const aliases = await readTsConfigAliases(root, files.filter(file => !isSensitivePath(path.relative(root, file))));
 
   const project = new Project({
     skipAddingFilesFromTsConfig: true,
@@ -371,6 +388,7 @@ export async function buildWorkspaceIndex(
   const diagnostics = createDiagnostics("full");
 
   for (const absolutePath of files.sort()) {
+    if (isSensitivePath(path.relative(root, absolutePath))) continue;
     const ext = path.extname(absolutePath);
     if (!SEARCHABLE_EXTENSIONS.has(ext)) {
       continue;
@@ -378,7 +396,12 @@ export async function buildWorkspaceIndex(
 
     try {
       const fileStat = await stat(absolutePath);
-      const text = await readFile(absolutePath, "utf8");
+      if (fileStat.size > MAX_FILE_BYTES) {
+        diagnostics.largeFilesIgnored.push({ path: toRelativePath(root, absolutePath), reason: "File exceeds 1 MiB" });
+        continue;
+      }
+      const safePath = authorizeFile(root, absolutePath);
+      const text = await readFile(safePath, "utf8");
       const contentHash = hashContent(text);
       const sourceFile = INDEXABLE_SOURCE_EXTENSIONS.has(ext)
         ? project.addSourceFileAtPathIfExists(absolutePath)
@@ -460,7 +483,7 @@ export async function buildWorkspaceIndex(
 
   await writePersistedIndex(index);
   await clearWorkspaceMemoryStale(root);
-  cachedIndex = index;
+  cachedIndexes.set(root, index);
   return index;
 }
 
@@ -476,7 +499,7 @@ export async function refreshChangedFiles(
     ...(diff?.addedFiles ?? []),
   ]);
   index.deletedFiles = diff?.deletedFiles ?? [];
-  index.diagnostics.lastRefreshKind = diff ? "incremental" : "full";
+  index.diagnostics.lastRefreshKind = "full";
   await writePersistedIndex(index);
   return index;
 }
@@ -559,9 +582,8 @@ export async function searchCode(
   query: string,
   options: SearchOptions = {},
 ): Promise<SearchResult> {
-  if (!query) {
-    throw new Error("A non-empty query is required.");
-  }
+  if (options.regex) assertSafeRegex(query);
+  else assertSafeQuery(query);
 
   const root = resolveRoot(options.root);
   const maxResults = clamp(options.maxResults ?? 50, 1, MAX_RESULTS);
@@ -956,7 +978,9 @@ function addContentLines(
   text: string,
   diagnostics: IndexDiagnostics,
 ): void {
-  const rawLines = text.split(/\r?\n/);
+  const sanitized = redactSource(text);
+  for (const hit of sanitized.redactions) diagnostics.secretRedactions.push({ path: file.path, line: hit.line, pattern: hit.pattern });
+  const rawLines = sanitized.text.split(/\r?\n/);
 
   for (let i = 0; i < rawLines.length; i += 1) {
     const lineText = rawLines[i];
@@ -964,7 +988,7 @@ function addContentLines(
       continue;
     }
 
-    const redacted = redactSecrets(lineText.trimEnd(), file.path, i + 1, diagnostics);
+    const redacted = lineText.trimEnd().slice(0, MAX_LINE_LENGTH);
     const line: IndexedLine = {
       id: lines.length,
       file: file.path,
@@ -1535,6 +1559,7 @@ function createLineMatcher(
   options: SearchOptions,
 ): (line: string) => number[] {
   if (options.regex) {
+    assertSafeRegex(query);
     let expression: RegExp;
     try {
       expression = new RegExp(query, options.caseSensitive ? "g" : "gi");
@@ -1669,8 +1694,12 @@ async function readPersistedIndexUnchecked(
 }
 
 async function writePersistedIndex(index: WorkspaceIndex): Promise<void> {
-  await mkdir(path.dirname(index.indexPath), { recursive: true });
-  await writeFile(index.indexPath, `${JSON.stringify(index)}\n`, "utf8");
+  await mkdir(path.dirname(index.indexPath), { recursive: true, mode: 0o700 });
+  const temporary = `${index.indexPath}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(index)}\n`, { encoding: "utf8", mode: 0o600 });
+    await rename(temporary, index.indexPath);
+  } finally { await rm(temporary, { force: true }); }
 }
 
 async function isPersistedIndexFresh(index: WorkspaceIndex): Promise<boolean> {
@@ -1701,16 +1730,11 @@ async function isPersistedIndexFresh(index: WorkspaceIndex): Promise<boolean> {
   for (const [relativePath, fingerprint] of Object.entries(index.manifest)) {
     const absolutePath = path.join(index.root, relativePath);
     try {
+      authorizeFile(index.root, absolutePath);
       const fileStat = await stat(absolutePath);
-      if (
-        fileStat.size !== fingerprint.sizeBytes ||
-        fileStat.mtimeMs !== fingerprint.modifiedTimeMs
-      ) {
-        const text = await readFile(absolutePath, "utf8");
-        if (hashContent(text) !== fingerprint.contentHash) {
-          return false;
-        }
-      }
+      // Content hashes are checked even when mtime and size have been preserved.
+      const text = await readFile(absolutePath, "utf8");
+      if (fileStat.size !== fingerprint.sizeBytes || hashContent(text) !== fingerprint.contentHash) return false;
     } catch {
       return false;
     }
@@ -1720,13 +1744,11 @@ async function isPersistedIndexFresh(index: WorkspaceIndex): Promise<boolean> {
 }
 
 async function discoverCurrentFiles(root: string): Promise<string[]> {
-  return fg(DEFAULT_PATTERNS, {
-    absolute: true,
-    cwd: root,
-    ignore: IGNORE_PATTERNS,
-    onlyFiles: true,
-    unique: true,
+  const found = await fg(DEFAULT_PATTERNS, {
+    absolute: true, cwd: root, ignore: IGNORE_PATTERNS,
+    onlyFiles: true, unique: true, followSymbolicLinks: false,
   });
+  return found.filter(file => !isSensitivePath(path.relative(root, file)) && SEARCHABLE_EXTENSIONS.has(path.extname(file)));
 }
 
 async function isWorkspaceMemoryMarkedStale(root: string): Promise<boolean> {
