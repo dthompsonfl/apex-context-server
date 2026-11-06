@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { authorizeFile, boundedOutput } from "./safety.js";
+import { authorizeFile, boundedOutput, readAuthorizedSource } from "./safety.js";
 import { extractComponentContext } from "./ast.js";
 import {
   buildWorkspaceIndex,
@@ -207,7 +207,7 @@ async function readNearestPackageJson(
   while (dir === root || (!path.relative(root, dir).startsWith(".." + path.sep) && path.relative(root, dir) !== ".." && !path.isAbsolute(path.relative(root, dir)))) {
     try {
       const pkgPath = authorizeFile(root, path.join(dir, "package.json"));
-      return JSON.parse(await readFile(pkgPath, "utf8")) as {
+      return JSON.parse((await readAuthorizedSource(root, pkgPath)).text) as {
         name?: string;
         version?: string;
       };
