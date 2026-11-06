@@ -56,7 +56,7 @@ try {
     "--scope", "project", "--client", client], env, 180000);
   const configPath = path.join(project, "opencode.json");
   const config = JSON.parse(await readFile(configPath, "utf8"));
-  model = await createMockToolModel({ workspace: project });
+  model = await createMockToolModel({ workspace: project, client });
   if (client === "v1") {
     config.provider = {
       fixture: {
