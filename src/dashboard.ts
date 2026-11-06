@@ -219,7 +219,7 @@ async function readGuardState(root: string): Promise<GuardState | null> {
 }
 
 function getDashboardStatus(index: WorkspaceIndex, guard: GuardState | null): string {
-  if (!guard) return "NO GUARD";
+  if (!guard) return "INDEX AVAILABLE (guard not connected)";
   if (guard.memoryStale) return "STALE";
   if (
     index.diagnostics.skippedFiles.length > 0 ||
@@ -228,7 +228,7 @@ function getDashboardStatus(index: WorkspaceIndex, guard: GuardState | null): st
   ) {
     return "DEGRADED";
   }
-  return "ACTIVE";
+  return "INDEX AVAILABLE (freshness checked per lookup)";
 }
 
 function hashRoot(root: string): string {
