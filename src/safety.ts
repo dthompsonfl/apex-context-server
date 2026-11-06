@@ -116,6 +116,8 @@ export function redactSource(source: string): { text: string; redactions: Secret
     ["private-key", /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g],
     ["json-credential", /["'](?:private[_-]?key|password|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key)["']\s*:\s*["'][^"']{8,}["']/gi],
     ["assignment-secret", /\b[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|API_KEY|PRIVATE_KEY|ACCESS_KEY)[A-Z0-9_]*\s*[:=]\s*["']?[^"',;\s]{8,}["']?/gi],
+    ["basic-authorization", /\bAuthorization\s*[:=]\s*["']?Basic\s+[A-Za-z0-9+/=]{12,}["']?/gi],
+    ["url-credential", /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@'"<>?#]+:[^\s/@'"<>?#]+@[^\s'"<>]+/gi],
     ["bearer-token", /\bBearer\s+[A-Za-z0-9._~+/-]{16,}/g],
     ["aws-access-key", /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g],
     ["known-token-prefix", /\b(?:ghp_|gho_|github_pat_|sk-[A-Za-z0-9_-]{3,})[A-Za-z0-9_-]{16,}\b/g],

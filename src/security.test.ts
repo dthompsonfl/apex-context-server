@@ -3,7 +3,7 @@ import test from "node:test";
 import path from "node:path";
 import os from "node:os";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { authorizeFile, assertSafeRegex, isSensitivePath, MAX_FILE_BYTES } from "./safety.js";
+import { authorizeFile, assertSafeRegex, isSensitivePath, MAX_FILE_BYTES, boundedOutput, redactSource } from "./safety.js";
 import { buildWorkspaceIndex, findSymbol, searchCode } from "./indexer.js";
 import { extractComponentContext } from "./ast.js";
 
@@ -81,6 +81,50 @@ test("hostile regex input is rejected and oversized files are diagnosed", async 
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previous;
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+
+test("Basic Authorization headers and credentials in connection URLs are redacted at all boundaries", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "apex-url-secret-"));
+  const root = path.join(temp, "workspace");
+  const priorRoot = process.env.APEX_CONTEXT_ROOT;
+  const priorConfig = process.env.OPENCODE_CONFIG_DIR;
+  const encodedBasic = "dXNlcjpwYXNzd29yZC1tb3Jl";
+  const dbPassword = "SYNTHETIC_URL_PASSWORD_12345";
+  const code = 'export const testBasic = "Authorization: Basic ' + encodedBasic + '";\n' +
+    'export const testConnection = "postgresql://reader:' + dbPassword + '@db.example.test:5432/app";\n';
+  try {
+    await mkdir(path.join(root, "src"), { recursive: true });
+    process.env.APEX_CONTEXT_ROOT = root;
+    process.env.OPENCODE_CONFIG_DIR = path.join(temp, "config");
+    await writeFile(path.join(root, "src/connection.ts"), code);
+
+    const redacted = redactSource(code);
+    assert.ok(redacted.redactions.some(hit => hit.pattern === "basic-authorization"));
+    assert.ok(redacted.redactions.some(hit => hit.pattern === "url-credential"));
+    assert.doesNotMatch(redacted.text, new RegExp(encodedBasic));
+    assert.doesNotMatch(redacted.text, new RegExp(dbPassword));
+    assert.doesNotMatch(boundedOutput(code), new RegExp(dbPassword));
+
+    const index = await buildWorkspaceIndex({ root, force: true });
+    const persisted = await readFile(index.indexPath, "utf8");
+    for (const secret of [encodedBasic, dbPassword]) {
+      assert.equal(persisted.includes(secret), false, "No raw credential in persisted index");
+    }
+    assert.ok(index.diagnostics.secretRedactions.some(hit => hit.pattern === "basic-authorization"));
+    assert.ok(index.diagnostics.secretRedactions.some(hit => hit.pattern === "url-credential"));
+    assert.equal((await searchCode(dbPassword, { root })).matchCount, 0);
+
+    const ast = await extractComponentContext(path.join(root, "src/connection.ts"), "testConnection");
+    assert.doesNotMatch(ast, new RegExp(dbPassword));
+    assert.match(ast, /REDACTED_SECRET/);
+  } finally {
+    if (priorRoot === undefined) delete process.env.APEX_CONTEXT_ROOT;
+    else process.env.APEX_CONTEXT_ROOT = priorRoot;
+    if (priorConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = priorConfig;
     await rm(temp, { recursive: true, force: true });
   }
 });

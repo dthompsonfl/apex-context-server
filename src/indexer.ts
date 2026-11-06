@@ -2117,6 +2117,14 @@ function redactSecrets(
       pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
     },
     {
+      name: "basic-authorization",
+      pattern: /\bAuthorization\s*[:=]\s*["']?Basic\s+[A-Za-z0-9+/=]{12,}["']?/gi,
+    },
+    {
+      name: "url-credential",
+      pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@'"<>?#]+:[^\s/@'"<>?#]+@[^\s'"<>]+/gi,
+    },
+    {
       name: "aws-access-key",
       pattern: /\bAKIA[0-9A-Z]{16}\b/g,
     },
